@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from backend.db import engine, apply_sqlite_pragmas
 from backend.routers.services import router as services_router
 from backend.routers.calls import router as calls_router
+from backend.routers.x402 import router as x402_router
 
 app = FastAPI(title="0pi-backend")
 
@@ -23,4 +24,5 @@ def health():
 # Routers
 app.include_router(services_router)
 app.include_router(calls_router)
+app.include_router(x402_router)
 

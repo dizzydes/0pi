@@ -19,6 +19,8 @@ MCP_DIR.mkdir(parents=True, exist_ok=True)
 class ServiceCreate(BaseModel):
     provider_name: str
     api_docs_url: HttpUrl
+    upstream_url: HttpUrl  # real API endpoint to proxy
+    method: str = "POST"   # HTTP method for upstream
     price_per_call_usdc: float
     payout_wallet: str  # Coinbase Embedded Wallet ID
     api_key: str        # secure ref, stored encrypted
@@ -60,6 +62,20 @@ def create_service(payload: ServiceCreate) -> dict:
         )
         provider_id = res.lastrowid
 
+        # Also insert an endpoint record for the upstream
+        conn.exec_driver_sql(
+            """
+            INSERT INTO endpoints (provider_id, path, method, description)
+            VALUES (:provider_id, :path, :method, :description)
+            """,
+            {
+                "provider_id": provider_id,
+                "path": str(payload.upstream_url),
+                "method": payload.method.upper(),
+                "description": "Primary upstream endpoint",
+            },
+        )
+
         # Create a simple service_id (use provider_id for now)
         service_id = f"svc_{provider_id}"
 
@@ -73,6 +89,8 @@ def create_service(payload: ServiceCreate) -> dict:
             "category": payload.category,
             "price_per_call_usdc": payload.price_per_call_usdc,
             "docs_url": str(payload.api_docs_url),
+            "upstream_url": str(payload.upstream_url),
+            "method": payload.method.upper(),
             "x402_url": x402_url,
         }
         out_path = MCP_DIR / f"{service_id}.json"
