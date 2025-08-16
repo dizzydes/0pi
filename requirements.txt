@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy>=2
+pydantic
+python-dotenv
+cryptography
+rfc8785
+eth-hash
+
