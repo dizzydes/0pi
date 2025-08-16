@@ -1,0 +1,44 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "callId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "requestHash",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "responseHash",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "emitter",
+        "type": "address"
+      }
+    ],
+    "name": "ApiCallProved",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      { "internalType": "string", "name": "callId", "type": "string" },
+      { "internalType": "string", "name": "requestHash", "type": "string" },
+      { "internalType": "string", "name": "responseHash", "type": "string" }
+    ],
+    "name": "emitApiCallProved",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

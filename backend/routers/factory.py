@@ -31,18 +31,27 @@ def factory_form() -> str:
       </head>
       <body>
         <h1>Publish an Endpoint</h1>
-        <form method="post" action="/factory">
+        <div style="margin-bottom:12px">
+          <button type="button" id="connect-cdp">Connect CDP</button>
+          <select id="cdp-wallets" style="margin-left:8px; min-width:300px; display:none">
+            <option value="">Select CDP Wallet (Base)</option>
+            <option value="__create__">+ Create new Base wallet</option>
+          </select>
+        </div>
+        <form method="post" action="/factory" id="service-form">
+          <input type="hidden" name="cdp_wallet_id" id="cdp_wallet_id" />
+          <input type="hidden" name="payout_wallet" id="payout_wallet" />
           <label>Provider Name</label>
           <input name="provider_name" required />
 
           <div class="row">
             <div>
               <label>CDP Wallet ID</label>
-              <input name="cdp_wallet_id" required />
+              <input name="cdp_wallet_id_visible" id="cdp_wallet_id_visible" placeholder="Auto-filled when CDP connected" disabled />
             </div>
             <div>
-              <label>Payout Wallet (Embedded)</label>
-              <input name="payout_wallet" required />
+              <label>Payout Wallet (Base EVM address)</label>
+              <input name="payout_wallet_visible" id="payout_wallet_visible" placeholder="0x... (auto-filled or enter manually)" />
             </div>
           </div>
 
@@ -113,7 +122,51 @@ def factory_form() -> str:
 
           <button type="submit">Create Service</button>
         </form>
-      </body>
+        <script>
+          async function fetchWallets() {
+            try {
+              const r = await fetch('/cdp/wallets', { credentials: 'same-origin' });
+              if (!r.ok) throw new Error('Not connected to CDP or server error');
+              const items = await r.json();
+              const sel = document.getElementById('cdp-wallets');
+              sel.style.display = 'inline-block';
+              // clear except first two options
+              while (sel.options.length > 2) sel.remove(2);
+              for (const it of items) {
+                const opt = document.createElement('option');
+                opt.value = JSON.stringify(it);
+                opt.textContent = `${it.account_id} — ${it.address}`;
+                sel.appendChild(opt);
+              }
+            } catch (e) {
+              alert(e.message || 'CDP connect failed');
+            }
+          }
+          async function createWallet() {
+            const r = await fetch('/cdp/wallets', { method: 'POST', credentials: 'same-origin' });
+            if (!r.ok) { alert('Failed to create wallet'); return; }
+            await fetchWallets();
+          }
+          document.getElementById('connect-cdp').addEventListener('click', fetchWallets);
+          document.getElementById('cdp-wallets').addEventListener('change', async (e) => {
+            const val = e.target.value;
+            if (val === '__create__') {
+              await createWallet();
+              return;
+            }
+            if (!val) return;
+            const data = JSON.parse(val);
+            document.getElementById('cdp_wallet_id').value = data.account_id;
+            document.getElementById('cdp_wallet_id_visible').value = data.account_id;
+            document.getElementById('payout_wallet').value = data.address;
+            document.getElementById('payout_wallet_visible').value = data.address;
+          });
+          // Sync manual payout wallet entry to hidden field
+          document.getElementById('payout_wallet_visible').addEventListener('input', (e) => {
+            document.getElementById('payout_wallet').value = e.target.value;
+          });
+        </script>
+        </body>
     </html>
     """
     return html

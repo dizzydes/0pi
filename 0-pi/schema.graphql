@@ -1,0 +1,10 @@
+type ApiCallProved @entity(immutable: true) {
+  id: Bytes!
+  callId: String! # string
+  requestHash: String! # string
+  responseHash: String! # string
+  emitter: Bytes! # address
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
