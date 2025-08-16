@@ -124,7 +124,7 @@ async def paid_proxy(service_id: str = Path(...), request: Request = None) -> Re
     headers_out = {
         "X-0pi-Call-Id": call_id,
         "X-0pi-Tx-Hash": tx_hash,
-        "X-0pi-Subgraph": f"https://thegraph.com/explorer?query=0pi&service_id={service_id}",
+        "X-0pi-Subgraph": f"https://thegraph.com/explorer?query=0pi&search={service_id}",
     }
 
     content = resp.content

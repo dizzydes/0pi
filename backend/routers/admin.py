@@ -22,7 +22,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None, alias="X-Admin-Tok
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-def admin_home(_: None = Depends(require_admin)) -> str:
+def admin_home() -> str:
     # Aggregate calls by service
     conn = get_connection()
     cur = conn.cursor()
@@ -45,7 +45,7 @@ def admin_home(_: None = Depends(require_admin)) -> str:
         f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
         f"<td style='text-align:right'>{r[3]}</td>"
         f"<td><a href='/admin/services/{r[0]}'>details</a></td>"
-        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&service_id={r[0]}'>verify</a></td>"
+        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&search={r[0]}'>verify</a></td>"
         f"</tr>" for r in rows
     )
 
@@ -77,7 +77,7 @@ def admin_home(_: None = Depends(require_admin)) -> str:
 
 
 @router.get("/services/{service_id}", response_class=HTMLResponse)
-def service_details(service_id: str, _: None = Depends(require_admin)) -> str:
+def service_details(service_id: str) -> str:
     if not service_id.startswith("svc_"):
         raise HTTPException(status_code=404, detail="Unknown service_id")
 
@@ -115,7 +115,7 @@ def service_details(service_id: str, _: None = Depends(require_admin)) -> str:
         f"<td>{c[1]}</td>"
         f"<td><code>{c[2]}</code></td>"
         f"<td><a target='_blank' href='https://basescan.org/tx/{(c[3] or '').replace('0x','')}'>{c[3] or ''}</a></td>"
-        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&service_id={service_id}&response_hash={(c[2] or '')}'>verify</a></td>"
+        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&search={c[2] or ''}'>verify</a></td>"
         f"</tr>" for c in calls
     )
 
@@ -133,7 +133,7 @@ def service_details(service_id: str, _: None = Depends(require_admin)) -> str:
       </head>
       <body>
         <h1>{service_id} — {name} <small style='color:#555'>[{category}]</small></h1>
-        <p><a href="/admin">Back</a> · <a target="_blank" href="https://thegraph.com/explorer?query=0pi&service_id={service_id}">View in The Graph</a></p>
+        <p><a href="/admin">Back</a> · <a target="_blank" href="https://thegraph.com/explorer?query=0pi&search={service_id}">View in The Graph</a></p>
         <table>
           <thead>
             <tr><th>Call ID</th><th>When</th><th>Response Hash</th><th>Tx Hash</th><th>Verify</th></tr>

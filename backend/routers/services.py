@@ -48,7 +48,7 @@ def create_service(payload: ServiceCreate) -> dict:
     service_id = f"svc_{uuid.uuid4().hex[:8]}"
 
     x402_url = f"/x402/{service_id}"
-    analytics_url = f"https://thegraph.com/explorer?query=0pi&service_id={service_id}"
+    analytics_url = f"https://thegraph.com/explorer?query=0pi&search={service_id}"
 
     # Save MCP listing JSON (holds upstream info for proxy)
     listing = {
