@@ -7,8 +7,7 @@ import json
 from fastapi import APIRouter, HTTPException, Path, Request, Response
 import requests
 
-from backend.db import engine
-from backend.crypto import decrypt_secret
+from backend.db import get_connection
 from backend.hash_utils import canonical_keccak_hex
 
 router = APIRouter(prefix="/x402", tags=["x402"])
@@ -31,21 +30,14 @@ def emit_onchain_proof(call_id: str, req_hash: str, resp_hash: str) -> str:
     return "0x" + uuid.uuid5(uuid.NAMESPACE_URL, call_id).hex
 
 
-def load_provider_by_service(conn, service_id: str) -> Dict[str, Any]:
-    # Our current service_id is svc_{provider_id}
-    if not service_id.startswith("svc_"):
-        raise HTTPException(status_code=404, detail="Unknown service_id")
-    try:
-        provider_id = int(service_id.split("_", 1)[1])
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Unknown service_id")
-    row = conn.exec_driver_sql(
-        "SELECT id, name, docs_url, api_key_ciphertext FROM providers WHERE id = :id",
-        {"id": provider_id},
-    ).fetchone()
+def load_service(conn, service_id: str) -> Dict[str, Any]:
+    cur = conn.cursor()
+    cur.execute("SELECT service_id, provider_id, x402_url FROM services WHERE service_id=?", (service_id,))
+    row = cur.fetchone()
+    cur.close()
     if not row:
         raise HTTPException(status_code=404, detail="Service not found")
-    return {"id": row[0], "name": row[1], "docs_url": row[2], "api_key_ciphertext": row[3]}
+    return dict(row)
 
 
 @router.post("/{service_id}")
@@ -67,30 +59,33 @@ async def paid_proxy(service_id: str = Path(...), request: Request = None) -> Re
 
     call_id = str(uuid.uuid4())
 
-    # Lookup provider and decrypt API key
-    with engine.begin() as conn:
-        provider = load_provider_by_service(conn, service_id)
-        api_key_bytes = decrypt_secret(provider["api_key_ciphertext"])  # type: ignore
-        api_key = api_key_bytes.decode("utf-8")
+    # Lookup service (and provider_id)
+    conn = get_connection()
+    svc = load_service(conn, service_id)
 
-    # Proxy to real API: read from endpoints table (first endpoint for provider)
-    with engine.begin() as conn:
-        ep = conn.exec_driver_sql(
-            "SELECT id, path, method FROM endpoints WHERE provider_id = :pid ORDER BY id LIMIT 1",
-            {"pid": provider["id"]},
-        ).fetchone()
-    if not ep:
+    # Load upstream info from MCP listing file created at service creation
+    from pathlib import Path
+    import json as _json
+    listing_path = Path(__file__).resolve().parents[1] / "mcp_listings" / f"{service_id}.json"
+    if not listing_path.exists():
+        conn.close()
+        raise HTTPException(status_code=500, detail="MCP listing missing for service")
+    listing = _json.loads(listing_path.read_text())
+    upstream = listing.get("upstream_url")
+    method = (listing.get("method") or "POST").upper()
+    if not upstream:
+        conn.close()
         raise HTTPException(status_code=500, detail="No upstream endpoint configured")
 
-    endpoint_id, upstream, method = ep[0], ep[1], (ep[2] or "POST").upper()
-
     try:
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        # For now, we don't include provider secrets from DB; api_key_ref is an external ref
+        headers = {"Content-Type": "application/json"}
         if method == "GET":
             resp = requests.get(upstream, params=body or {}, headers=headers, timeout=30)
         else:
             resp = requests.request(method, upstream, json=body, headers=headers, timeout=30)
     except requests.RequestException as e:
+        conn.close()
         raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
 
     # Compute response hash
@@ -103,21 +98,27 @@ async def paid_proxy(service_id: str = Path(...), request: Request = None) -> Re
     # Emit on-chain event (stub) and get tx hash
     tx_hash = emit_onchain_proof(call_id, req_hash, resp_hash)
 
-    # Log call in SQLite
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            """
-            INSERT INTO api_calls (endpoint_id, user_wallet, request_body, response_hash, onchain_tx_hash)
-            VALUES (:endpoint_id, :user_wallet, :request_body, :response_hash, :onchain_tx_hash)
-            """,
-            {
-                "endpoint_id": endpoint_id,
-                "user_wallet": "",  # can be taken from payment context later
-                "request_body": None if body is None else json.dumps(body),
-                "response_hash": resp_hash,
-                "onchain_tx_hash": tx_hash,
-            },
-        )
+    # Log call in SQLite (new schema)
+    cur = conn.cursor()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        """
+        INSERT INTO api_calls (call_id, service_id, tx_hash, request_hash, response_hash, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            call_id,
+            service_id,
+            tx_hash,
+            req_hash,
+            resp_hash,
+            now,
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
 
     # Build proxied response with headers
     headers_out = {

@@ -1,0 +1,11 @@
+{
+  "id": "svc_f7999ea0",
+  "provider_id": "prov_63145a04",
+  "name": "HTTPBin Echo",
+  "category": "test",
+  "price_per_call_usdc": 0.01,
+  "docs_url": "https://httpbin.org/",
+  "upstream_url": "https://httpbin.org/post",
+  "method": "POST",
+  "x402_url": "/x402/svc_f7999ea0"
+}
