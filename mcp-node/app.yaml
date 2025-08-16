@@ -1,0 +1,12 @@
+service: mcp
+runtime: nodejs20
+instance_class: F2
+env_variables:
+  # Set these in Cloud Console for production
+  # PRIVATE_KEY: "0x..."
+  RESOURCE_SERVER_URL: "https://YOUR_PROJECT_ID.uc.r.appspot.com"
+  ENDPOINT_PATH: "/x402/{provider_name}"
+handlers:
+- url: /.*
+  script: auto
+

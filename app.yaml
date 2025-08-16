@@ -1,0 +1,16 @@
+runtime: python311
+entrypoint: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b :$PORT backend.main:app
+
+instance_class: F2
+
+env_variables:
+  SUBGRAPH_EXPLORER_BASE: "https://thegraph.com/explorer?query=0pi&search="
+  BASE_SCAN_BASE: "https://basescan.org/tx/"
+  X402_NETWORK: "base"
+
+handlers:
+- url: /static
+  static_dir: static
+- url: /.*
+  script: auto
+

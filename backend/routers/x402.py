@@ -18,6 +18,39 @@ class X402Error(Exception):
     pass
 
 
+def _verify_receipt(receipt_header: str, *, expected_amount: float, expected_pay_to: str, network: str) -> Dict[str, Any] | None:
+    """
+    Dev-only receipt verifier. When X402_ACCEPT_UNSIGNED=true, accepts a JSON stringified
+    object in the receipt header with keys: { payer, amount, ticket_id, pay_to, network }.
+    Returns the parsed dict if fields look sane and match expectations; otherwise None.
+    NOTE: Replace this with a real x402/CDP verification as available.
+    """
+    import os, json as _json
+    if os.getenv("X402_ACCEPT_UNSIGNED", "false").lower() not in ("1", "true", "yes"):
+        return None
+    try:
+        data = _json.loads(receipt_header)
+        if not isinstance(data, dict):
+            return None
+        amt = float(data.get("amount") or 0.0)
+        if amt < expected_amount:
+            return None
+        if (data.get("pay_to") or "").lower() != expected_pay_to.lower():
+            return None
+        if (data.get("network") or "").lower() != network.lower():
+            return None
+        # basic shape ok
+        return {
+            "payer": data.get("payer"),
+            "amount": amt,
+            "ticket_id": data.get("ticket_id") or data.get("id"),
+            "pay_to": data.get("pay_to"),
+            "network": data.get("network"),
+        }
+    except Exception:
+        return None
+
+
 def _format_price_str(usdc: float) -> str:
     # x402 expects dollar string like "$0.001"
     return f"${usdc:.6f}".rstrip("0").rstrip(".")
@@ -50,18 +83,29 @@ def verify_or_challenge(req: Request, svc: Dict[str, Any], provider: Dict[str, A
     pay_to = provider["payout_wallet"]  # type: ignore
     net = _network()
 
-    # Attempt to use x402 if available; otherwise, return a 402 challenge
-    try:
-        import importlib
-        # Prefer a generic server verifier if exposed; otherwise raise to fall back to challenge
-        x402_mod = importlib.import_module("x402")
-        # If the library provides a server-side verifier API, integrate here.
-        # Since API surface may vary, we conservatively challenge and let the x402 client retry.
-        # Returning a 402 with headers allows x402 clients to fulfill payment automatically.
-        return {"payer": None, "amount": 0.0, "ticket_id": None, "challenge": _challenge_response(price_usdc, pay_to, net)}
-    except Exception:
-        # Library not present or no server API available — send challenge
-        return {"payer": None, "amount": 0.0, "ticket_id": None, "challenge": _challenge_response(price_usdc, pay_to, net)}
+    # Optional server-side verification path. Defaults to issuing a 402.
+    # Enable by setting X402_SERVER_VERIFY=true and providing a receipt in the request headers.
+    import os
+    if os.getenv("X402_SERVER_VERIFY", "false").lower() in ("1", "true", "yes"):
+        # Accept a receipt passed by a trusted proxy or client.
+        # For production, replace _verify_receipt with a real verifier.
+        receipt = req.headers.get("x-402-receipt") or req.headers.get("X-402-Receipt")
+        if receipt:
+            try:
+                verified = _verify_receipt(receipt, expected_amount=price_usdc, expected_pay_to=pay_to, network=net)
+                if verified:
+                    return {
+                        "payer": verified.get("payer"),
+                        "amount": float(verified.get("amount") or 0.0),
+                        "ticket_id": verified.get("ticket_id"),
+                        "challenge": None,
+                    }
+            except Exception:
+                # fall through to challenge on any verifier error
+                pass
+
+    # Default: return a 402 challenge with x402 hints
+    return {"payer": None, "amount": 0.0, "ticket_id": None, "challenge": _challenge_response(price_usdc, pay_to, net)}
 
 
 def emit_onchain_proof(call_id: str, req_hash: str, resp_hash: str) -> str:

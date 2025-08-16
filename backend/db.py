@@ -56,7 +56,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Services
+    # Services (current schema without api_key_ref)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS services (
@@ -65,7 +65,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             api_docs_url TEXT NOT NULL,
             price_per_call_usdc REAL NOT NULL,
             category TEXT NOT NULL,
-            api_key_ref TEXT NOT NULL,
             x402_url TEXT NOT NULL,
             analytics_url TEXT,
             created_at TEXT NOT NULL,
@@ -73,6 +72,42 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+    # Migration: drop legacy api_key_ref column if present
+    try:
+        cols = _columns(conn, 'services')
+        if 'api_key_ref' in cols:
+            # Rename old table
+            cur.execute("ALTER TABLE services RENAME TO services_old")
+            # Create new table without api_key_ref
+            cur.execute(
+                """
+                CREATE TABLE services (
+                    service_id TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    api_docs_url TEXT NOT NULL,
+                    price_per_call_usdc REAL NOT NULL,
+                    category TEXT NOT NULL,
+                    x402_url TEXT NOT NULL,
+                    analytics_url TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(provider_id) REFERENCES providers(provider_id)
+                )
+                """
+            )
+            # Copy data
+            cur.execute(
+                """
+                INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at)
+                SELECT service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at
+                FROM services_old
+                """
+            )
+            # Drop old table
+            cur.execute("DROP TABLE services_old")
+    except Exception:
+        # If anything goes wrong, do not block startup; schema will be handled next run or manually
+        pass
 
     # Service secrets (encrypted)
     cur.execute(

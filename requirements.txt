@@ -1,14 +1,16 @@
-fastapi
-uvicorn
+# Pinned for deployment
+fastapi==0.111.0
+uvicorn[standard]==0.30.5
+gunicorn==21.2.0
 sqlalchemy>=2
-pydantic
-python-dotenv
+pydantic==2.8.2
+python-dotenv==1.0.1
 cryptography
 rfc8785
 eth-hash
 pycryptodome
-requests
-web3>=6
+requests==2.32.3
+web3==6.20.1
 x402
 cdp
 cdp-sdk

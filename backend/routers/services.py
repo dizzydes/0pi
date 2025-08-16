@@ -16,6 +16,34 @@ router = APIRouter(prefix="/services", tags=["services"])
 MCP_DIR = Path(__file__).resolve().parents[1] / "mcp_listings"
 MCP_DIR.mkdir(parents=True, exist_ok=True)
 
+# Allowed categories for services (server-enforced)
+ALLOWED_CATEGORIES: list[str] = [
+    "🌍 Geo & Mapping",
+    "⛅ Weather & Environment",
+    "🚖 Transportation",
+    "💬 Language & Chat AI",
+    "👁️ Vision AI",
+    "🎙️ Speech AI",
+    "🎯 Recommendation & Personalization",
+    "🔍 Search",
+    "💳 Finance & Payments",
+    "🛒 E-commerce",
+    "📊 CRM & Sales",
+    "📋 Project Management",
+    "💬 Messaging",
+    "✉️ Email",
+    "📱 Social Media",
+    "📰 News & Content",
+    "📚 Knowledge Bases",
+    "📈 Market Data",
+    "☁️ Cloud & Storage",
+    "🔐 Authentication & Identity",
+    "🛠️ DevOps & Monitoring",
+    "🌐 Translation",
+    "📆 Calendar & Scheduling",
+    "📑 Document & Data Management",
+]
+
 
 class ServiceCreate(BaseModel):
     provider_name: str  # used in /api/{provider_name}/...
@@ -24,7 +52,6 @@ class ServiceCreate(BaseModel):
     api_docs_url: HttpUrl  # link to docs for reference
     price_per_call_usdc: float = Field(ge=0)
     payout_wallet: str  # Provider payout EVM address
-    api_key_ref: str    # external ref for the key (kept for compatibility)
     category: str
 
     # Optional auth details for injecting provider API key
@@ -38,6 +65,12 @@ class ServiceCreate(BaseModel):
         import re
         if not re.fullmatch(r"[a-z0-9_]+", v):
             raise ValueError("must be lowercase, one word, digits/underscores only (e.g., openai, weather_api)")
+        return v
+
+    @validator("category")
+    def _category_allowed(cls, v: str) -> str:
+        if v not in ALLOWED_CATEGORIES:
+            raise ValueError("category must be one of the allowed values")
         return v
 
 
@@ -54,9 +87,10 @@ def create_service(payload: ServiceCreate) -> dict:
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Generate IDs if not provided
-    provider_id = payload.provider_id or f"prov_{uuid.uuid4().hex[:8]}"
+    # Generate IDs
     service_id = f"svc_{uuid.uuid4().hex[:8]}"
+    # Deterministic provider_id derived from provider_name to avoid FK mismatches
+    provider_id = f"prov_{payload.provider_name}"
 
     # Expose x402 endpoint by provider_name (human-friendly) instead of opaque service_id
     x402_url = f"/x402/{payload.provider_name}"
@@ -65,49 +99,58 @@ def create_service(payload: ServiceCreate) -> dict:
     subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
     analytics_url = f"{subgraph_base}{service_id}"
 
-    # Save MCP listing JSON (holds upstream info for proxy)
-    listing = {
-        "id": service_id,
-        "provider_id": provider_id,
-        "name": payload.provider_name,
-        "category": payload.category,
-        "price_per_call_usdc": payload.price_per_call_usdc,
-        "docs_url": str(payload.api_docs_url),
-        # API carry-through base path for this service
-        "api_base": f"/api/{payload.provider_name}",
-        "x402_url": x402_url,
-    }
-    out_path = MCP_DIR / f"{service_id}.json"
-    out_path.write_text(json.dumps(listing, indent=2))
-
     # Persist provider and service using sqlite3
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Upsert-like behavior for providers: insert if not exists
-        cur.execute("SELECT 1 FROM providers WHERE provider_id=?", (provider_id,))
-        exists = cur.fetchone() is not None
-        if not exists:
-            cur.execute(
-                """
-                INSERT INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    provider_id,
-                    payload.provider_name,
-                    (payload.cdp_wallet_id or ""),
-                    payload.payout_wallet,
-                    now,
-                ),
-            )
+        # Ensure provider row exists with deterministic provider_id
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                provider_id,
+                payload.provider_name,
+                (payload.cdp_wallet_id or ""),
+                payload.payout_wallet,
+                now,
+            ),
+        )
+        # Optionally update payout wallet if provider already existed
+        cur.execute(
+            """
+            UPDATE providers SET payout_wallet = ?, cdp_wallet_id = COALESCE(NULLIF(?, ''), cdp_wallet_id)
+            WHERE provider_id = ?
+            """,
+            (
+                payload.payout_wallet,
+                (payload.cdp_wallet_id or ""),
+                provider_id,
+            ),
+        )
+
+        # Save MCP listing JSON (holds upstream info for proxy)
+        listing = {
+            "id": service_id,
+            "provider_id": provider_id,
+            "name": payload.provider_name,
+            "category": payload.category,
+            "price_per_call_usdc": payload.price_per_call_usdc,
+            "docs_url": str(payload.api_docs_url),
+            # API carry-through base path for this service
+            "api_base": f"/api/{payload.provider_name}",
+            "x402_url": x402_url,
+        }
+        out_path = MCP_DIR / f"{service_id}.json"
+        out_path.write_text(json.dumps(listing, indent=2))
 
         # Insert service row
         cur.execute(
             """
-            INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, api_key_ref, x402_url, analytics_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 service_id,
@@ -115,7 +158,6 @@ def create_service(payload: ServiceCreate) -> dict:
                 str(payload.api_docs_url),
                 float(payload.price_per_call_usdc),
                 payload.category,
-                payload.api_key_ref,
                 x402_url,
                 analytics_url,
                 now,
