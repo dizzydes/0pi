@@ -6,4 +6,5 @@ python-dotenv
 cryptography
 rfc8785
 eth-hash
+requests
 
