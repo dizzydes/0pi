@@ -1,0 +1,8 @@
+{
+  "id": "svc_1",
+  "name": "Acme Weather",
+  "category": "weather",
+  "price_per_call_usdc": 0.02,
+  "docs_url": "https://api.example.com/docs",
+  "x402_url": "/x402/svc_1"
+}
