@@ -94,27 +94,179 @@ def emit_onchain_proof(call_id: str, req_hash: str, resp_hash: str) -> str:
     return tx_hash.hex()
 
 
-def load_service(conn, service_id: str) -> Dict[str, Any]:
+def load_service_by_provider_name(conn, provider_name: str) -> Dict[str, Any]:
+    """Resolve the latest service row for a given provider name."""
     cur = conn.cursor()
-    cur.execute("SELECT service_id, provider_id, x402_url, price_per_call_usdc FROM services WHERE service_id=?", (service_id,))
+    cur.execute(
+        """
+        SELECT s.service_id, s.provider_id, s.x402_url, s.price_per_call_usdc
+        FROM services s
+        JOIN providers p ON p.provider_id = s.provider_id
+        WHERE p.provider_name = ?
+        ORDER BY s.created_at DESC
+        LIMIT 1
+        """,
+        (provider_name,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Service not found for provider")
+    return {"service_id": row[0], "provider_id": row[1], "x402_url": row[2], "price_per_call_usdc": row[3]}
+
+
+def load_service_by_id(conn, service_id: str) -> Dict[str, Any]:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT service_id, provider_id, x402_url, price_per_call_usdc FROM services WHERE service_id=?",
+        (service_id,),
+    )
     row = cur.fetchone()
     cur.close()
     if not row:
         raise HTTPException(status_code=404, detail="Service not found")
-    return dict(row)
+    return {"service_id": row[0], "provider_id": row[1], "x402_url": row[2], "price_per_call_usdc": row[3]}
 
 
-@router.post("/{service_id}")
-async def paid_proxy(service_id: str = Path(...), request: Request = None) -> Response:
+# Backward-compat: handle old ID-based path like /x402/svc_abcdefgh
+@router.post("/{service_id:svc_[0-9a-fA-F]{8}}")
+async def paid_proxy_by_id(service_id: str = Path(...), request: Request = None) -> Response:
     # Hash request body early (also used for proof)
     try:
         body = await request.json()
     except Exception:
         body = None
 
-    # Lookup service (and provider_id, price)
     conn = get_connection()
-    svc = load_service(conn, service_id)
+    svc = load_service_by_id(conn, service_id)
+
+    # Load provider for payout address
+    curp = conn.cursor()
+    curp.execute("SELECT provider_id, payout_wallet FROM providers WHERE provider_id=?", (svc["provider_id"],))
+    prow = curp.fetchone()
+    curp.close()
+    if not prow:
+        conn.close()
+        raise HTTPException(status_code=500, detail="Provider not found for service")
+    provider = dict(prow)
+
+    # Issue x402 challenge (or verify if server supports it)
+    verification = verify_or_challenge(request, svc, provider)
+    if verification.get("challenge") is not None:
+        conn.close()
+        return verification["challenge"]
+
+    paid = verification
+
+    # Hash request
+    req_hash = canonical_keccak_hex(body if body is not None else {})
+
+    call_id = str(uuid.uuid4())
+
+    # Load upstream info from MCP listing file created at service creation
+    from pathlib import Path
+    import json as _json
+    listing_path = Path(__file__).resolve().parents[1] / "mcp_listings" / f"{service_id}.json"
+    if not listing_path.exists():
+        conn.close()
+        raise HTTPException(status_code=500, detail="MCP listing missing for service")
+    listing = _json.loads(listing_path.read_text())
+    upstream = listing.get("upstream_url")
+    method = (listing.get("method") or "POST").upper()
+    if not upstream:
+        conn.close()
+        raise HTTPException(status_code=500, detail="No upstream endpoint configured")
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        cur = conn.cursor()
+        cur.execute("SELECT auth_location, auth_key, auth_template, api_key_cipher FROM service_secrets WHERE service_id=?", (service_id,))
+        sec = cur.fetchone()
+        if sec:
+            from backend.crypto import decrypt_secret
+            key_plain = decrypt_secret(sec[3], aad=service_id.encode("utf-8")).decode("utf-8")
+            auth_location = sec[0]
+            auth_key = sec[1]
+            auth_template = sec[2]
+            token_value = auth_template.replace("{key}", key_plain)
+            if auth_location == "header":
+                headers[auth_key] = token_value
+            else:
+                if method == "GET":
+                    pass
+                else:
+                    if isinstance(body, dict):
+                        body.setdefault(auth_key, token_value)
+        if method == "GET":
+            params = body or {}
+            if sec and sec[0] == "query":
+                params = dict(params)
+                params[sec[1]] = auth_template.replace("{key}", key_plain)  # type: ignore[name-defined]
+            resp = requests.get(upstream, params=params, headers=headers, timeout=30)
+        else:
+            resp = requests.request(method, upstream, json=body, headers=headers, timeout=30)
+    except requests.RequestException as e:
+        conn.close()
+        raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
+
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"non_json": True, "status_code": resp.status_code}
+    resp_hash = canonical_keccak_hex(resp_json)
+
+    try:
+        tx_hash = emit_onchain_proof(call_id, req_hash, resp_hash)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"On-chain emission failed: {e}")
+
+    cur = conn.cursor()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        """
+        INSERT INTO api_calls (call_id, service_id, tx_hash, request_hash, response_hash, timestamp, payer, amount_paid_usdc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            call_id,
+            service_id,
+            tx_hash,
+            req_hash,
+            resp_hash,
+            now,
+            paid.get("payer"),
+            float(paid.get("amount") or 0.0),
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    import os
+    subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi\u0026search=")
+    headers_out = {
+        "X-0pi-Call-Id": call_id,
+        "X-0pi-Tx-Hash": tx_hash,
+        "X-0pi-Subgraph": f"{subgraph_base}{service_id}",
+    }
+    content = resp.content
+    return Response(content=content, status_code=resp.status_code, headers=headers_out, media_type=resp.headers.get("content-type", "application/octet-stream"))
+
+
+@router.post("/{provider_name}")
+async def paid_proxy(provider_name: str = Path(...), request: Request = None) -> Response:
+    # Hash request body early (also used for proof)
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+
+    # Lookup latest service for this provider (and provider_id, price)
+    conn = get_connection()
+    svc = load_service_by_provider_name(conn, provider_name)
+    service_id = svc["service_id"]
 
     # Load provider for payout address
     curp = conn.cursor()
@@ -143,7 +295,7 @@ async def paid_proxy(service_id: str = Path(...), request: Request = None) -> Re
     # Load upstream info from MCP listing file created at service creation
     from pathlib import Path
     import json as _json
-    listing_path = Path(__file__).resolve().parents[1] / "mcp_listings" / f"{service_id}.json"
+    listing_path = Path(__file__).resolve().parents[1] / "mcp_listings" / f"{svc['service_id']}.json"
     if not listing_path.exists():
         conn.close()
         raise HTTPException(status_code=500, detail="MCP listing missing for service")

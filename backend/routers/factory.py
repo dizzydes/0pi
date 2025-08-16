@@ -172,62 +172,7 @@ def factory_submit(
           <h2>Service created</h2>
           <p>API Base: <code>{out.get('api_base','')}</code></p>
           <p>X402: <code>POST {out['x402_url']}</code></p>
-          <p><a href="/admin/services/{provider_name}">View in Admin</a></p
-          <h3>Try It</h3>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:900px">
-            <div>
-              <label>Method</label>
-              <select id="try-method">
-                <option>GET</option>
-                <option>POST</option>
-                <option>PUT</option>
-                <option>PATCH</option>
-                <option>DELETE</option>
-              </select>
-            </div>
-            <div>
-              <label>Path (relative to {out.get('api_base','')})</label>
-              <input id="try-path" placeholder="v1/endpoint" />
-            </div>
-            <div style="grid-column: span 2">
-              <label>X-Target-Url (optional, full URL)</label>
-              <input id="try-target" placeholder="https://api.example.com/v1/endpoint" />
-            </div>
-            <div style="grid-column: span 2">
-              <label>Headers (JSON)</label>
-              <textarea id="try-headers" rows="4" placeholder="{{\"Content-Type\": \"application/json\"}}"></textarea>
-            </div>
-            <div style="grid-column: span 2">
-              <label>Body</label>
-              <textarea id="try-body" rows="6" placeholder="{{ }}"></textarea>
-            </div>
-            <div style="grid-column: span 2">
-              <button id="try-send">Send</button>
-            </div>
-            <div style="grid-column: span 2">
-              <label>Response</label>
-              <textarea id="try-out" rows="10" readonly></textarea>
-            </div>
-          </div>
-          <script>
-            const base = '{out.get('api_base','')}';
-            document.getElementById('try-send').addEventListener('click', async (e) => {{
-              e.preventDefault();
-              const m = document.getElementById('try-method').value;
-              const p = document.getElementById('try-path').value.trim().replace(/^\/+/, '');
-              const t = document.getElementById('try-target').value.trim();
-              let headers = {{}};
-              try {{ headers = JSON.parse(document.getElementById('try-headers').value || '{{}}'); }} catch {{}}
-              const bodyTxt = document.getElementById('try-body').value;
-              const opts = {{ method: m, headers }};
-              if (m !== 'GET' && m !== 'HEAD' && bodyTxt) opts.body = bodyTxt;
-              const url = (base || '') + (p ? '/' + p : '');
-              if (t) headers['X-Target-Url'] = t;
-              const r = await fetch(url, opts);
-              const txt = await r.text();
-              document.getElementById('try-out').value = `Status: ${{r.status}}\n` + txt;
-            }});
-          </script>
+          <p><a href="/admin/services/{provider_name}">View in Admin</a></p>
         </body></html>
         """
     )

@@ -40,6 +40,42 @@ def startup() -> None:
     # Initialize SQLite schema
     init_db()
 
+    # One-time migration: update MCP listing x402_url and DB services.x402_url
+    try:
+        from pathlib import Path
+        import json as _json
+        mcp_dir = Path(__file__).resolve().parents[1] / "mcp_listings"
+        if mcp_dir.exists():
+            for p in mcp_dir.glob("*.json"):
+                try:
+                    data = _json.loads(p.read_text())
+                    name = data.get("name")
+                    x402 = data.get("x402_url", "")
+                    if name and isinstance(name, str) and x402.startswith("/x402/svc_"):
+                        data["x402_url"] = f"/x402/{name}"
+                        p.write_text(_json.dumps(data, indent=2))
+                except Exception:
+                    continue
+        # Update DB rows where x402_url still uses service_id
+        from backend.db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        # SQLite-compatible correlated subquery to compute new URL
+        cur.execute(
+            """
+            UPDATE services
+            SET x402_url = '/x402/' || (
+                SELECT provider_name FROM providers p WHERE p.provider_id = services.provider_id
+            )
+            WHERE x402_url LIKE '/x402/svc_%'
+            """
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"MCP listing/DB migration skipped or failed: {e}")
+
     # Configure CDP SDK if available and env vars are set
     api_key_name = os.getenv("CDP_API_KEY_NAME")
     api_key_pk = os.getenv("CDP_API_KEY_PRIVATE_KEY")

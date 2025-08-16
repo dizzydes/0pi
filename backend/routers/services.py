@@ -58,7 +58,8 @@ def create_service(payload: ServiceCreate) -> dict:
     provider_id = payload.provider_id or f"prov_{uuid.uuid4().hex[:8]}"
     service_id = f"svc_{uuid.uuid4().hex[:8]}"
 
-    x402_url = f"/x402/{service_id}"
+    # Expose x402 endpoint by provider_name (human-friendly) instead of opaque service_id
+    x402_url = f"/x402/{payload.provider_name}"
     # Use configurable subgraph URL base if available
     import os
     subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
@@ -156,6 +157,7 @@ def create_service(payload: ServiceCreate) -> dict:
         "service_id": service_id,
         "x402_url": x402_url,
         "api_endpoint": x402_url,
+        "api_base": f"/api/{payload.provider_name}",
         "analytics_url": analytics_url,
         "mcp_listing_path": str(out_path),
         "status": "created",

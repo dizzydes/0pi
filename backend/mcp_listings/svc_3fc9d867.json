@@ -1,0 +1,10 @@
+{
+  "id": "svc_3fc9d867",
+  "provider_id": "prov_0db1b9c8",
+  "name": "openai",
+  "category": "ai",
+  "price_per_call_usdc": 0.01,
+  "docs_url": "https://platform.openai.com/docs/api-reference/introduction",
+  "api_base": "/api/openai",
+  "x402_url": "/x402/svc_3fc9d867"
+}
