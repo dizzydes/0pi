@@ -85,6 +85,7 @@ def service_details(service_id: str) -> str:
 
     conn = get_connection()
     cur = conn.cursor()
+    # Head info
     cur.execute(
         """
         SELECT s.service_id, p.provider_name, s.category
@@ -94,34 +95,106 @@ def service_details(service_id: str) -> str:
         (service_id,),
     )
     head = cur.fetchone()
+
+    # Recent calls (local)
     cur.execute(
         """
-        SELECT call_id, timestamp, response_hash, tx_hash
+        SELECT call_id, timestamp, response_hash, tx_hash, status_code, response_size_bytes
         FROM api_calls
         WHERE service_id = ?
         ORDER BY timestamp DESC
-        LIMIT 100
+        LIMIT 200
         """,
         (service_id,),
     )
     calls = cur.fetchall()
+
+    # Daily usage last 7 days (local)
+    cur.execute(
+        """
+        SELECT substr(timestamp, 1, 10) AS day, COUNT(1)
+        FROM api_calls
+        WHERE service_id = ? AND timestamp >= date('now','-7 day')
+        GROUP BY day
+        ORDER BY day
+        """,
+        (service_id,),
+    )
+    daily = cur.fetchall()
     cur.close()
     conn.close()
 
     name = head[1] if head else "unnamed"
     category = head[2] if head else ""
 
-    import os
+    import os, json as _json
+    import requests as _r
     subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
     base_scan = os.getenv("BASE_SCAN_BASE", "https://basescan.org/tx/")
-    rows_html = "".join(
-        f"<tr>"
-        f"<td>{c[0]}</td>"
-        f"<td>{c[1]}</td>"
-        f"<td><code>{c[2]}</code></td>"
-        f"<td><a target='_blank' href='{base_scan}{(c[3] or '').replace('0x','')}'>{c[3] or ''}</a></td>"
-        f"<td><a target='_blank' href='{subgraph_base}{c[2] or ''}'>verify</a></td>"
-        f"</tr>" for c in calls
+
+    # Query subgraph for recent events and index by txHash (lowercased)
+    subgraph_url = os.getenv("SUBGRAPH_URL")
+    chain_by_tx: dict[str, dict] = {}
+    if subgraph_url and calls:
+        try:
+            q = {
+                "query": """
+                    query($first: Int!) {
+                      apiCalls(first: $first, orderBy: timestamp, orderDirection: desc) {
+                        callId
+                        requestHash
+                        responseHash
+                        txHash
+                        blockNumber
+                        timestamp
+                      }
+                    }
+                """,
+                "variables": {"first": 500},
+            }
+            gr = _r.post(subgraph_url, json=q, timeout=20)
+            if gr.ok:
+                data = gr.json().get("data", {})
+                for ev in data.get("apiCalls", []) or []:
+                    h = (ev.get("txHash") or "").lower()
+                    if h:
+                        chain_by_tx[h] = ev
+        except Exception:
+            chain_by_tx = {}
+
+    # Build rows showing local vs on-chain
+    def row(c):
+      call_id, when, local_hash, txh, status_code, size_bytes = c[0], c[1], c[2], c[3], c[4], c[5]
+      txh_disp = txh or ""
+      ev = chain_by_tx.get((txh or "").lower()) if txh else None
+      on_hash = (ev or {}).get("responseHash", "")
+      match = (local_hash == on_hash and local_hash != "")
+      match_icon = "✅" if match else ("⚠️" if ev else "—")
+      return (
+          f"<tr>"
+          f"<td>{call_id}</td>"
+          f"<td>{when}</td>"
+          f"<td><code>{local_hash}</code></td>"
+          f"<td><code>{on_hash}</code></td>"
+          f"<td style='text-align:center'>{match_icon}</td>"
+          f"<td>{status_code}</td>"
+          f"<td>{size_bytes}</td>"
+          f"<td><a target='_blank' href='{base_scan}{txh_disp.replace('0x','')}'>{txh_disp}</a></td>"
+          f"</tr>"
+      )
+
+    rows_html = "".join(row(c) for c in calls)
+
+    # Daily usage mini-graph (simple bar chart using divs)
+    days = [d[0] for d in daily]
+    counts = [int(d[1]) for d in daily]
+    maxc = max(counts) if counts else 1
+    bars = "".join(
+        f"<div style='display:flex;align-items:center;gap:8px'>"
+        f"<div style='width:80px;color:#555'>{day}</div>"
+        f"<div style='background:#4f46e5;height:12px;width:{int(300*cnt/maxc)}px;border-radius:3px'></div>"
+        f"<div style='min-width:24px;text-align:right'>{cnt}</div>"
+        f"</div>" for day, cnt in zip(days, counts)
     )
 
     html = f"""
@@ -134,19 +207,31 @@ def service_details(service_id: str) -> str:
           th, td {{ border: 1px solid #ddd; padding: 8px; }}
           th {{ background: #f5f5f5; text-align: left; }}
           code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }}
+          .section {{ margin: 20px 0; }}
         </style>
       </head>
       <body>
         <h1>{service_id} — {name} <small style='color:#555'>[{category}]</small></h1>
-        <p><a href="/admin">Back</a> · <a target="_blank" href="https://thegraph.com/explorer?query=0pi&search={service_id}">View in The Graph</a></p>
-        <table>
-          <thead>
-            <tr><th>Call ID</th><th>When</th><th>Response Hash</th><th>Tx Hash</th><th>Verify</th></tr>
-          </thead>
-          <tbody>
-            {rows_html}
-          </tbody>
-        </table>
+        <p><a href="/admin">Back</a> · <a target="_blank" href="{subgraph_base}">View in The Graph</a></p>
+
+        <div class="section">
+          <h2>Daily usage (last 7 days)</h2>
+          <div>
+            {bars or '<div style="color:#777">No calls in the last 7 days</div>'}
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>Recent calls — Local vs On-chain</h2>
+          <table>
+            <thead>
+              <tr><th>Call ID</th><th>When</th><th>Local Response Hash</th><th>On-chain Hash</th><th>Match</th><th>Status</th><th>Size (bytes)</th><th>Tx</th></tr>
+            </thead>
+            <tbody>
+              {rows_html}
+            </tbody>
+          </table>
+        </div>
       </body>
     </html>
     """

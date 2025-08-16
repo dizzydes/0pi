@@ -10,12 +10,13 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cdp", tags=["cdp"])
 
-# Import CDP SDK symbols at module level as requested
-try:
-    from cdp import *  # type: ignore  # noqa: F401,F403
-    CDP_IMPORT_ERROR: Exception | None = None
-except Exception as _e:  # pragma: no cover
-    CDP_IMPORT_ERROR = _e
+from cdp import *
+# # Import CDP SDK symbols at module level as requested
+# try:
+#     from cdp import *  # type: ignore  # noqa: F401,F403
+#     CDP_IMPORT_ERROR: Exception | None = None
+# except Exception as _e:  # pragma: no cover
+#     CDP_IMPORT_ERROR = _e
 
 
 def _network() -> str:
@@ -53,10 +54,6 @@ async def list_wallets() -> List[Dict[str, str]]:
     # Validate required env early to give actionable feedback
     _require_env()
 
-    # Fail fast if SDK couldn't import at module load
-    if CDP_IMPORT_ERROR is not None:  # type: ignore[name-defined]
-        raise HTTPException(status_code=503, detail=f"CDP SDK import failed: {type(CDP_IMPORT_ERROR).__name__}: {CDP_IMPORT_ERROR}")
-
     try:
         # Configure explicitly each request to avoid relying on startup import variance
         Cdp.configure(os.environ["CDP_API_KEY_NAME"], os.environ["CDP_API_KEY_PRIVATE_KEY"])  # type: ignore[name-defined]
@@ -87,10 +84,6 @@ async def list_wallets() -> List[Dict[str, str]]:
 async def create_wallet() -> Dict[str, str]:
     # Validate required env early to give actionable feedback
     _require_env()
-
-    # Fail fast if SDK couldn't import at module load
-    if CDP_IMPORT_ERROR is not None:  # type: ignore[name-defined]
-        raise HTTPException(status_code=503, detail=f"CDP SDK import failed: {type(CDP_IMPORT_ERROR).__name__}: {CDP_IMPORT_ERROR}")
 
     try:
         Cdp.configure(os.environ["CDP_API_KEY_NAME"], os.environ["CDP_API_KEY_PRIVATE_KEY"])  # type: ignore[name-defined]
