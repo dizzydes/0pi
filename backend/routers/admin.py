@@ -41,11 +41,13 @@ def admin_home() -> str:
     cur.close()
     conn.close()
 
+    import os
+    subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
     rows_html = "".join(
         f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
         f"<td style='text-align:right'>{r[3]}</td>"
         f"<td><a href='/admin/services/{r[0]}'>details</a></td>"
-        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&search={r[0]}'>verify</a></td>"
+        f"<td><a target='_blank' href='{subgraph_base}{r[0]}'>verify</a></td>"
         f"</tr>" for r in rows
     )
 
@@ -109,13 +111,16 @@ def service_details(service_id: str) -> str:
     name = head[1] if head else "unnamed"
     category = head[2] if head else ""
 
+    import os
+    subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
+    base_scan = os.getenv("BASE_SCAN_BASE", "https://basescan.org/tx/")
     rows_html = "".join(
         f"<tr>"
         f"<td>{c[0]}</td>"
         f"<td>{c[1]}</td>"
         f"<td><code>{c[2]}</code></td>"
-        f"<td><a target='_blank' href='https://basescan.org/tx/{(c[3] or '').replace('0x','')}'>{c[3] or ''}</a></td>"
-        f"<td><a target='_blank' href='https://thegraph.com/explorer?query=0pi&search={c[2] or ''}'>verify</a></td>"
+        f"<td><a target='_blank' href='{base_scan}{(c[3] or '').replace('0x','')}'>{c[3] or ''}</a></td>"
+        f"<td><a target='_blank' href='{subgraph_base}{c[2] or ''}'>verify</a></td>"
         f"</tr>" for c in calls
     )
 

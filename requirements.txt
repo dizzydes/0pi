@@ -8,4 +8,7 @@ rfc8785
 eth-hash
 pycryptodome
 requests
+web3>=6
+x402
+cdp
 

@@ -1,0 +1,38 @@
+{
+  "specVersion": "0.0.5",
+  "schema": {
+    "file": "schema.graphql"
+  },
+  "dataSources": [
+    {
+      "kind": "ethereum",
+      "name": "ApiCallsRegistry",
+      "network": "base",
+      "source": {
+        "address": "{{REGISTRY_CONTRACT_ADDRESS}}",
+        "abi": "ApiCallsRegistry",
+        "startBlock": {{START_BLOCK}}
+      },
+      "mapping": {
+        "kind": "ethereum/events",
+        "apiVersion": "0.0.7",
+        "language": "wasm/assemblyscript",
+        "entities": ["ApiCall"],
+        "abis": [
+          {
+            "name": "ApiCallsRegistry",
+            "file": "../contracts/ApiCallsRegistry.abi.json"
+          }
+        ],
+        "eventHandlers": [
+          {
+            "event": "ApiCallProved(string,string,string,address)",
+            "handler": "handleApiCallProved"
+          }
+        ],
+        "file": "src/mapping.ts"
+      }
+    }
+  ]
+}
+

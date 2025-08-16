@@ -74,6 +74,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Service secrets (encrypted)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS service_secrets (
+            service_id TEXT PRIMARY KEY,
+            auth_location TEXT NOT NULL,   -- 'header' or 'query'
+            auth_key TEXT NOT NULL,        -- e.g., 'Authorization' or 'api_key'
+            auth_template TEXT NOT NULL,   -- e.g., 'Bearer {key}' or '{key}'
+            api_key_cipher BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(service_id) REFERENCES services(service_id)
+        )
+        """
+    )
+
     # ApiCalls
     cur.execute(
         """
@@ -84,6 +99,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             request_hash TEXT NOT NULL,
             response_hash TEXT NOT NULL,
             timestamp TEXT NOT NULL,
+            payer TEXT,
+            amount_paid_usdc REAL,
             FOREIGN KEY(service_id) REFERENCES services(service_id)
         )
         """

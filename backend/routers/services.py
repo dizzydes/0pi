@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, Field, validator
 
 from backend.db import get_connection, init_db
 from datetime import datetime, timezone
@@ -24,10 +24,24 @@ class ServiceCreate(BaseModel):
     api_docs_url: HttpUrl
     upstream_url: HttpUrl  # real API endpoint to proxy (stored in MCP listing)
     method: str = "POST"   # HTTP method for upstream (stored in MCP listing)
-    price_per_call_usdc: float
+    price_per_call_usdc: float = Field(ge=0)
     payout_wallet: str  # Coinbase Embedded Wallet ID
-    api_key_ref: str    # secure ref; not stored as ciphertext in DB per spec
+    api_key_ref: str    # external ref for the key (kept for compatibility)
     category: str
+
+    # Optional auth details for injecting provider API key
+    auth_location: str | None = Field(default="header", description="header or query")
+    auth_key: str | None = Field(default="Authorization")
+    auth_template: str | None = Field(default="Bearer {key}")
+    api_key_plain: str | None = Field(default=None, description="Provider API key to encrypt and store for proxy injection")
+
+    @validator("method")
+    def _method_upper(cls, v: str) -> str:
+        mv = v.upper()
+        allowed = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+        if mv not in allowed:
+            raise ValueError(f"method must be one of {sorted(allowed)}")
+        return mv
 
 
 @router.get("")
@@ -48,7 +62,10 @@ def create_service(payload: ServiceCreate) -> dict:
     service_id = f"svc_{uuid.uuid4().hex[:8]}"
 
     x402_url = f"/x402/{service_id}"
-    analytics_url = f"https://thegraph.com/explorer?query=0pi&search={service_id}"
+    # Use configurable subgraph URL base if available
+    import os
+    subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
+    analytics_url = f"{subgraph_base}{service_id}"
 
     # Save MCP listing JSON (holds upstream info for proxy)
     listing = {
@@ -69,46 +86,73 @@ def create_service(payload: ServiceCreate) -> dict:
     conn = get_connection()
     cur = conn.cursor()
 
-    # Upsert-like behavior for providers: insert if not exists
-    cur.execute("SELECT 1 FROM providers WHERE provider_id=?", (provider_id,))
-    exists = cur.fetchone() is not None
-    if not exists:
+    try:
+        # Upsert-like behavior for providers: insert if not exists
+        cur.execute("SELECT 1 FROM providers WHERE provider_id=?", (provider_id,))
+        exists = cur.fetchone() is not None
+        if not exists:
+            cur.execute(
+                """
+                INSERT INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    provider_id,
+                    payload.provider_name,
+                    payload.cdp_wallet_id,
+                    payload.payout_wallet,
+                    now,
+                ),
+            )
+
+        # Insert service row
         cur.execute(
             """
-            INSERT INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, api_key_ref, x402_url, analytics_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                service_id,
                 provider_id,
-                payload.provider_name,
-                payload.cdp_wallet_id,
-                payload.payout_wallet,
+                str(payload.api_docs_url),
+                float(payload.price_per_call_usdc),
+                payload.category,
+                payload.api_key_ref,
+                x402_url,
+                analytics_url,
                 now,
             ),
         )
 
-    # Insert service row
-    cur.execute(
-        """
-        INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, api_key_ref, x402_url, analytics_url, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            service_id,
-            provider_id,
-            str(payload.api_docs_url),
-            float(payload.price_per_call_usdc),
-            payload.category,
-            payload.api_key_ref,
-            x402_url,
-            analytics_url,
-            now,
-        ),
-    )
+        # Insert encrypted secret if provided
+        if payload.api_key_plain:
+            from backend.crypto import encrypt_secret
+            cipher = encrypt_secret(payload.api_key_plain.encode("utf-8"), aad=service_id.encode("utf-8"))
+            auth_location = (payload.auth_location or "header").lower()
+            if auth_location not in ("header", "query"):
+                raise HTTPException(status_code=400, detail="auth_location must be 'header' or 'query'")
+            auth_key = payload.auth_key or ("Authorization" if auth_location == "header" else "api_key")
+            auth_template = payload.auth_template or ("Bearer {key}" if auth_location == "header" else "{key}")
+            cur.execute(
+                """
+                INSERT INTO service_secrets (service_id, auth_location, auth_key, auth_template, api_key_cipher, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (service_id, auth_location, auth_key, auth_template, cipher, now),
+            )
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        # Remove listing file if we failed
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
     # Return completion payload
     return {

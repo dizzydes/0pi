@@ -1,0 +1,11 @@
+type ApiCall @entity {
+  id: ID!
+  callId: String!
+  requestHash: String!
+  responseHash: String!
+  emitter: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
