@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from backend.db import get_connection
 
@@ -12,12 +12,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 def require_admin(x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token")) -> None:
-    expected = os.getenv("ADMIN_TOKEN")
-    if not expected:
-        # Missing admin token configuration
-        raise HTTPException(status_code=500, detail="ADMIN_TOKEN not configured in environment")
-    if x_admin_token != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Demo mode: no admin auth required
+    return None
 
 
 @router.get("", response_class=HTMLResponse)
@@ -46,8 +42,11 @@ def admin_home() -> str:
     rows_html = "".join(
         f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
         f"<td style='text-align:right'>{r[3]}</td>"
-        f"<td><a href='/admin/services/{r[0]}'>details</a></td>"
+        f"<td><a href='/admin/services/{r[1]}'>details</a></td>"
         f"<td><a target='_blank' href='{subgraph_base}{r[0]}'>verify</a></td>"
+        f"<td><form method='post' action='/admin/services/{r[0]}/delete' style='display:inline'>"
+        f"<button type='submit' onclick=\"return confirm('Delete this service?')\">Delete</button>"
+        f"</form></td>"
         f"</tr>" for r in rows
     )
 
@@ -66,7 +65,7 @@ def admin_home() -> str:
         <h1>0pi Analytics</h1>
         <table>
           <thead>
-            <tr><th>Service ID</th><th>Name</th><th>Category</th><th>Call Count</th><th>Details</th><th>Verify (The Graph)</th></tr>
+            <tr><th>Service ID</th><th>Name</th><th>Category</th><th>Call Count</th><th>Details</th><th>Verify (The Graph)</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {rows_html}
@@ -78,23 +77,28 @@ def admin_home() -> str:
     return html
 
 
-@router.get("/services/{service_id}", response_class=HTMLResponse)
-def service_details(service_id: str) -> str:
-    if not service_id.startswith("svc_"):
-        raise HTTPException(status_code=404, detail="Unknown service_id")
-
+@router.get("/services/{provider_name}", response_class=HTMLResponse)
+def service_details(provider_name: str) -> str:
     conn = get_connection()
     cur = conn.cursor()
-    # Head info
+    # Resolve provider -> latest service for that provider
     cur.execute(
         """
         SELECT s.service_id, p.provider_name, s.category
-        FROM services s JOIN providers p ON p.provider_id = s.provider_id
-        WHERE s.service_id = ?
+        FROM services s
+        JOIN providers p ON p.provider_id = s.provider_id
+        WHERE p.provider_name = ?
+        ORDER BY s.created_at DESC
+        LIMIT 1
         """,
-        (service_id,),
+        (provider_name,),
     )
     head = cur.fetchone()
+    if not head:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Unknown provider_name")
+    service_id = head[0]
 
     # Recent calls (local)
     cur.execute(
@@ -200,7 +204,7 @@ def service_details(service_id: str) -> str:
     html = f"""
     <html>
       <head>
-        <title>0pi Admin - {service_id}</title>
+        <title>0pi Admin - {provider_name}</title>
         <style>
           body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; }}
           table {{ border-collapse: collapse; width: 100%; }}
@@ -211,8 +215,8 @@ def service_details(service_id: str) -> str:
         </style>
       </head>
       <body>
-        <h1>{service_id} — {name} <small style='color:#555'>[{category}]</small></h1>
-        <p><a href="/admin">Back</a> · <a target="_blank" href="{subgraph_base}">View in The Graph</a></p>
+        <h1>{provider_name} — {name} <small style='color:#555'>[{category}]</small></h1>
+        <p><a href="/admin">Back</a> · <a target="_blank" href="{subgraph_base}{service_id}">View in The Graph</a> · <form method='post' action='/admin/services/{service_id}/delete' style='display:inline'><button type='submit' onclick="return confirm('Delete this service?')">Delete this service</button></form></p>
 
         <div class="section">
           <h2>Daily usage (last 7 days)</h2>
@@ -231,9 +235,24 @@ def service_details(service_id: str) -> str:
               {rows_html}
             </tbody>
           </table>
-        </div>
       </body>
     </html>
     """
     return html
+
+@router.post("/services/{service_id}/delete")
+def delete_service(service_id: str):
+    if not service_id.startswith("svc_"):
+        raise HTTPException(status_code=400, detail="invalid service id")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM service_secrets WHERE service_id = ?", (service_id,))
+        cur.execute("DELETE FROM api_calls WHERE service_id = ?", (service_id,))
+        cur.execute("DELETE FROM services WHERE service_id = ?", (service_id,))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return JSONResponse({"status": "deleted", "service_id": service_id})
 

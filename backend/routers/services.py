@@ -18,14 +18,12 @@ MCP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ServiceCreate(BaseModel):
-    provider_name: str
+    provider_name: str  # used in /api/{provider_name}/...
     provider_id: str | None = None
-    cdp_wallet_id: str
-    api_docs_url: HttpUrl
-    upstream_url: HttpUrl  # real API endpoint to proxy (stored in MCP listing)
-    method: str = "POST"   # HTTP method for upstream (stored in MCP listing)
+    cdp_wallet_id: str | None = None  # optional when not using CDP
+    api_docs_url: HttpUrl  # link to docs for reference
     price_per_call_usdc: float = Field(ge=0)
-    payout_wallet: str  # Coinbase Embedded Wallet ID
+    payout_wallet: str  # Provider payout EVM address
     api_key_ref: str    # external ref for the key (kept for compatibility)
     category: str
 
@@ -35,13 +33,12 @@ class ServiceCreate(BaseModel):
     auth_template: str | None = Field(default="Bearer {key}")
     api_key_plain: str | None = Field(default=None, description="Provider API key to encrypt and store for proxy injection")
 
-    @validator("method")
-    def _method_upper(cls, v: str) -> str:
-        mv = v.upper()
-        allowed = {"GET", "POST", "PUT", "PATCH", "DELETE"}
-        if mv not in allowed:
-            raise ValueError(f"method must be one of {sorted(allowed)}")
-        return mv
+    @validator("provider_name")
+    def _provider_name_slug(cls, v: str) -> str:
+        import re
+        if not re.fullmatch(r"[a-z0-9_]+", v):
+            raise ValueError("must be lowercase, one word, digits/underscores only (e.g., openai, weather_api)")
+        return v
 
 
 @router.get("")
@@ -75,8 +72,8 @@ def create_service(payload: ServiceCreate) -> dict:
         "category": payload.category,
         "price_per_call_usdc": payload.price_per_call_usdc,
         "docs_url": str(payload.api_docs_url),
-        "upstream_url": str(payload.upstream_url),
-        "method": payload.method.upper(),
+        # API carry-through base path for this service
+        "api_base": f"/api/{payload.provider_name}",
         "x402_url": x402_url,
     }
     out_path = MCP_DIR / f"{service_id}.json"
@@ -99,7 +96,7 @@ def create_service(payload: ServiceCreate) -> dict:
                 (
                     provider_id,
                     payload.provider_name,
-                    payload.cdp_wallet_id,
+                    (payload.cdp_wallet_id or ""),
                     payload.payout_wallet,
                     now,
                 ),

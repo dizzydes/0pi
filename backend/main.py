@@ -72,4 +72,6 @@ app.include_router(x402_router)
 app.include_router(admin_router)
 app.include_router(factory_router)
 app.include_router(cdp_router)
+from backend.routers.api_proxy import router as api_proxy_router
+app.include_router(api_proxy_router)
 

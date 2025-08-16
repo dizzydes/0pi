@@ -30,24 +30,17 @@ def factory_form() -> str:
         </style>
       </head>
       <body>
-        <h1>Publish an Endpoint</h1>
-        <div style="margin-bottom:12px">
-          <button type="button" id="connect-cdp">Connect CDP</button>
-          <select id="cdp-wallets" style="margin-left:8px; min-width:300px; display:none">
-            <option value="">Select CDP Wallet (Base)</option>
-            <option value="__create__">+ Create new Base wallet</option>
-          </select>
-        </div>
+        <h1>Publish a Service</h1>
         <form method="post" action="/factory" id="service-form">
           <input type="hidden" name="cdp_wallet_id" id="cdp_wallet_id" />
           <input type="hidden" name="payout_wallet" id="payout_wallet" />
-          <label>Provider Name</label>
-          <input name="provider_name" required />
+          <label>Provider Name (lowercase, one word with underscores)</label>
+          <input name="provider_name" required placeholder="e.g., openai or weather_api" />
 
           <div class="row">
             <div>
-              <label>CDP Wallet ID</label>
-              <input name="cdp_wallet_id_visible" id="cdp_wallet_id_visible" placeholder="Auto-filled when CDP connected" disabled />
+              <label>CDP Wallet ID (optional)</label>
+              <input name="cdp_wallet_id_visible" id="cdp_wallet_id_visible" placeholder="Enter CDP wallet/account id (optional)" />
             </div>
             <div>
               <label>Payout Wallet (Base EVM address)</label>
@@ -57,26 +50,14 @@ def factory_form() -> str:
 
           <div class="row">
             <div>
-              <label>API Docs URL</label>
+              <label>API Docs Link</label>
               <input name="api_docs_url" type="url" required />
             </div>
-            <div>
-              <label>Upstream Endpoint URL</label>
-              <input name="upstream_url" type="url" required />
-            </div>
+            <div></div>
           </div>
 
           <div class="row3">
-            <div>
-              <label>HTTP Method</label>
-              <select name="method">
-                <option>POST</option>
-                <option>GET</option>
-                <option>PUT</option>
-                <option>PATCH</option>
-                <option>DELETE</option>
-              </select>
-            </div>
+            <div></div>
             <div>
               <label>Category</label>
               <input name="category" placeholder="e.g. weather, ai, data" required />
@@ -123,47 +104,26 @@ def factory_form() -> str:
           <button type="submit">Create Service</button>
         </form>
         <script>
-          async function fetchWallets() {
-            try {
-              const r = await fetch('/cdp/wallets', { credentials: 'same-origin' });
-              if (!r.ok) throw new Error('Not connected to CDP or server error');
-              const items = await r.json();
-              const sel = document.getElementById('cdp-wallets');
-              sel.style.display = 'inline-block';
-              // clear except first two options
-              while (sel.options.length > 2) sel.remove(2);
-              for (const it of items) {
-                const opt = document.createElement('option');
-                opt.value = JSON.stringify(it);
-                opt.textContent = `${it.account_id} — ${it.address}`;
-                sel.appendChild(opt);
-              }
-            } catch (e) {
-              alert(e.message || 'CDP connect failed');
-            }
-          }
-          async function createWallet() {
-            const r = await fetch('/cdp/wallets', { method: 'POST', credentials: 'same-origin' });
-            if (!r.ok) { alert('Failed to create wallet'); return; }
-            await fetchWallets();
-          }
-          document.getElementById('connect-cdp').addEventListener('click', fetchWallets);
-          document.getElementById('cdp-wallets').addEventListener('change', async (e) => {
-            const val = e.target.value;
-            if (val === '__create__') {
-              await createWallet();
-              return;
-            }
-            if (!val) return;
-            const data = JSON.parse(val);
-            document.getElementById('cdp_wallet_id').value = data.account_id;
-            document.getElementById('cdp_wallet_id_visible').value = data.account_id;
-            document.getElementById('payout_wallet').value = data.address;
-            document.getElementById('payout_wallet_visible').value = data.address;
+          // Sync manual CDP wallet id entry (optional) to hidden field
+          document.getElementById('cdp_wallet_id_visible').addEventListener('input', (e) => {
+            document.getElementById('cdp_wallet_id').value = e.target.value;
           });
           // Sync manual payout wallet entry to hidden field
           document.getElementById('payout_wallet_visible').addEventListener('input', (e) => {
             document.getElementById('payout_wallet').value = e.target.value;
+          });
+        </script>
+        <script>
+          // Basic EVM address validation for payout wallet (0x + 40 hex)
+          const payoutInput = document.getElementById('payout_wallet_visible');
+          const form = document.getElementById('service-form');
+          function isEvm(addr){ return /^0x[0-9a-fA-F]{40}$/.test(addr||''); }
+          form.addEventListener('submit', (e) => {
+            const v = (payoutInput.value||'').trim();
+            if(!isEvm(v)){
+              e.preventDefault();
+              alert('Payout Wallet must be a valid EVM address (0x + 40 hex chars)');
+            }
           });
         </script>
         </body>
@@ -178,8 +138,6 @@ def factory_submit(
     cdp_wallet_id: str = Form(...),
     payout_wallet: str = Form(...),
     api_docs_url: str = Form(...),
-    upstream_url: str = Form(...),
-    method: str = Form("POST"),
     category: str = Form(...),
     price_per_call_usdc: float = Form(...),
     api_key_plain: str | None = Form(None),
@@ -194,8 +152,6 @@ def factory_submit(
             provider_id=None,
             cdp_wallet_id=cdp_wallet_id,
             api_docs_url=HttpUrl(api_docs_url),
-            upstream_url=HttpUrl(upstream_url),
-            method=method,
             price_per_call_usdc=price_per_call_usdc,
             payout_wallet=payout_wallet,
             api_key_ref=api_key_ref or "",
@@ -214,9 +170,64 @@ def factory_submit(
         f"""
         <html><body>
           <h2>Service created</h2>
-          <pre>{json.dumps(out, indent=2)}</pre>
-          <p><a href="/admin/services/{out['service_id']}">View in Admin</a></p>
-          <p><code>POST {out['x402_url']}</code></p>
+          <p>API Base: <code>{out.get('api_base','')}</code></p>
+          <p>X402: <code>POST {out['x402_url']}</code></p>
+          <p><a href="/admin/services/{provider_name}">View in Admin</a></p
+          <h3>Try It</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:900px">
+            <div>
+              <label>Method</label>
+              <select id="try-method">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option>
+              </select>
+            </div>
+            <div>
+              <label>Path (relative to {out.get('api_base','')})</label>
+              <input id="try-path" placeholder="v1/endpoint" />
+            </div>
+            <div style="grid-column: span 2">
+              <label>X-Target-Url (optional, full URL)</label>
+              <input id="try-target" placeholder="https://api.example.com/v1/endpoint" />
+            </div>
+            <div style="grid-column: span 2">
+              <label>Headers (JSON)</label>
+              <textarea id="try-headers" rows="4" placeholder="{{\"Content-Type\": \"application/json\"}}"></textarea>
+            </div>
+            <div style="grid-column: span 2">
+              <label>Body</label>
+              <textarea id="try-body" rows="6" placeholder="{{ }}"></textarea>
+            </div>
+            <div style="grid-column: span 2">
+              <button id="try-send">Send</button>
+            </div>
+            <div style="grid-column: span 2">
+              <label>Response</label>
+              <textarea id="try-out" rows="10" readonly></textarea>
+            </div>
+          </div>
+          <script>
+            const base = '{out.get('api_base','')}';
+            document.getElementById('try-send').addEventListener('click', async (e) => {{
+              e.preventDefault();
+              const m = document.getElementById('try-method').value;
+              const p = document.getElementById('try-path').value.trim().replace(/^\/+/, '');
+              const t = document.getElementById('try-target').value.trim();
+              let headers = {{}};
+              try {{ headers = JSON.parse(document.getElementById('try-headers').value || '{{}}'); }} catch {{}}
+              const bodyTxt = document.getElementById('try-body').value;
+              const opts = {{ method: m, headers }};
+              if (m !== 'GET' && m !== 'HEAD' && bodyTxt) opts.body = bodyTxt;
+              const url = (base || '') + (p ? '/' + p : '');
+              if (t) headers['X-Target-Url'] = t;
+              const r = await fetch(url, opts);
+              const txt = await r.text();
+              document.getElementById('try-out').value = `Status: ${{r.status}}\n` + txt;
+            }});
+          </script>
         </body></html>
         """
     )
