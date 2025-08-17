@@ -27,7 +27,8 @@ def admin_home() -> str:
         SELECT s.service_id,
                COALESCE(p.provider_name, 'unnamed') AS name,
                COALESCE(s.category, '') AS category,
-               (SELECT COUNT(1) FROM api_calls ac WHERE ac.service_id = s.service_id) AS call_count
+               (SELECT COUNT(1) FROM api_calls ac WHERE ac.service_id = s.service_id) AS call_count,
+               COALESCE(s.price_per_call_usdc, 0) AS price_per_call_usdc
         FROM services s
         JOIN providers p ON p.provider_id = s.provider_id
         ORDER BY s.created_at
@@ -40,20 +41,25 @@ def admin_home() -> str:
     import os
     subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
     rows_html = "".join(
-        f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
-        f"<td style='text-align:right'>{r[3]}</td>"
-        f"<td><a href='/admin/services/{r[1]}'>details</a></td>"
-        f"<td><a target='_blank' href='{subgraph_base}{r[0]}'>verify</a></td>"
-        f"<td><form method='post' action='/admin/services/{r[0]}/delete' style='display:inline'>"
-        f"<button type='submit' onclick=\"return confirm('Delete this service?')\">Delete</button>"
-        f"</form></td>"
-        f"</tr>" for r in rows
+        (
+            lambda service_id, name, category, call_count, price: (
+                f"<tr><td>{service_id}</td><td>{name}</td><td>{category}</td>"
+                f"<td style='text-align:right'>{call_count}</td>"
+                f"<td style='text-align:right'>$ {call_count * float(price):.2f}</td>"
+                f"<td><a href='/admin/services/{name}'>details</a></td>"
+                f"<td><a target='_blank' href='{subgraph_base}{service_id}'>verify</a></td>"
+                f"<td><form method='post' action='/admin/services/{service_id}/delete' style='display:inline'>"
+                f"<button type='submit' onclick=\"return confirm('Delete this service?')\">Delete</button>"
+                f"</form></td>"
+                f"</tr>"
+            )
+        )(*r) for r in rows
     )
 
     html = f"""
     <html>
       <head>
-        <title>0pi Admin - Analytics</title>
+        <title>0pi Admin</title>
         <style>
           body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; }}
           table {{ border-collapse: collapse; width: 100%; }}
@@ -62,10 +68,10 @@ def admin_home() -> str:
         </style>
       </head>
       <body>
-        <h1>0pi Analytics</h1>
+        <h1>0pi Services</h1>
         <table>
           <thead>
-            <tr><th>Service ID</th><th>Name</th><th>Category</th><th>Call Count</th><th>Details</th><th>Verify (The Graph)</th><th>Actions</th></tr>
+            <tr><th>Service ID</th><th>Name</th><th>Category</th><th>Call Count</th><th>x402 Revenue</th><th>Details</th><th>Verify (The Graph)</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {rows_html}
@@ -84,7 +90,7 @@ def service_details(provider_name: str) -> str:
     # Resolve provider -> latest service for that provider
     cur.execute(
         """
-        SELECT s.service_id, p.provider_name, s.category
+        SELECT s.service_id, p.provider_name, s.category, s.price_per_call_usdc, s.api_docs_url, s.upstream_base_url
         FROM services s
         JOIN providers p ON p.provider_id = s.provider_id
         WHERE p.provider_name = ?
@@ -130,6 +136,11 @@ def service_details(provider_name: str) -> str:
 
     name = head[1] if head else "unnamed"
     category = head[2] if head else ""
+    price_usdc = float(head[3]) if head else 0.0
+    docs_url = str(head[4]) if head else "#"
+    upstream_base = str(head[5]) if head else ""
+    price_usdc = float(head[3]) if head else 0.0
+    docs_url = str(head[4]) if head else "#"
 
     import os, json as _json
     import requests as _r
@@ -218,8 +229,14 @@ def service_details(provider_name: str) -> str:
         <h1>{provider_name} — {name} <small style='color:#555'>[{category}]</small></h1>
         <p><a href="/admin">Back</a> · <a target="_blank" href="{subgraph_base}{service_id}">View in The Graph</a> · <form method='post' action='/admin/services/{service_id}/delete' style='display:inline'><button type='submit' onclick="return confirm('Delete this service?')">Delete this service</button></form></p>
 
+        <p style='color:#444'>
+          API Base: <code>https://0pi.dev/{provider_name}/ + <a href="{docs_url}" target="_blank" rel="noopener noreferrer">endpoint</a></code><br/>
+          Pricing: <strong>${price_usdc:.2f} USDC</strong> per call, paid at request-time by x402<br/>
+          Upstream base: <code>{upstream_base}</code><br/>
+        </p>
+
         <div class="section">
-          <h2>Daily usage (last 7 days)</h2>
+          <h2>Daily usage (last 7 days)</h2
           <div>
             {bars or '<div style="color:#777">No calls in the last 7 days</div>'}
           </div>
@@ -247,6 +264,7 @@ def delete_service(service_id: str):
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Delete dependent rows first
         cur.execute("DELETE FROM service_secrets WHERE service_id = ?", (service_id,))
         cur.execute("DELETE FROM api_calls WHERE service_id = ?", (service_id,))
         cur.execute("DELETE FROM services WHERE service_id = ?", (service_id,))
@@ -254,5 +272,14 @@ def delete_service(service_id: str):
     finally:
         cur.close()
         conn.close()
-    return JSONResponse({"status": "deleted", "service_id": service_id})
+    # Also remove MCP listing file if present
+    try:
+        from pathlib import Path
+        mcp_dir = Path(__file__).resolve().parents[1] / "mcp_listings"
+        listing_path = mcp_dir / f"{service_id}.json"
+        listing_path.unlink(missing_ok=True)
+    except Exception:
+        # Do not fail deletion if file removal fails
+        pass
+    return JSONResponse({"status": "deleted", "service_id": service_id, "mcp_listing_removed": True})
 

@@ -1,10 +1,11 @@
 {
-  "id": "svc_beb6e688",
-  "provider_id": "prov_9e0f66c7",
+  "id": "svc_76b8016f",
+  "provider_id": "prov_3d745838",
   "name": "openai",
-  "category": "ai",
+  "category": "\ud83d\udcac Language & Chat AI",
   "price_per_call_usdc": 0.01,
   "docs_url": "https://platform.openai.com/docs/api-reference/introduction",
+  "upstream_base_url": "https://api.openai.com/",
   "api_base": "/api/openai",
   "x402_url": "/x402/openai"
 }

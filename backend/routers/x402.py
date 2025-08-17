@@ -6,11 +6,13 @@ import json
 
 from fastapi import APIRouter, HTTPException, Path, Request, Response
 import requests
+import logging
 
 from backend.db import get_connection
 from backend.hash_utils import canonical_keccak_hex
 
-router = APIRouter(prefix="/x402", tags=["x402"])
+router = APIRouter(prefix="/x402", tags=["x402"]) 
+logger = logging.getLogger(__name__)
 
 
 # x402 verification integration (seller side)
@@ -174,7 +176,7 @@ def load_service_by_id(conn, service_id: str) -> Dict[str, Any]:
 
 # Backward-compat: handle old ID-based path like /x402/svc_abcdefgh
 @router.post("/{service_id:svc_[0-9a-fA-F]{8}}")
-async def paid_proxy_by_id(service_id: str = Path(...), request: Request = None) -> Response:
+async def paid_proxy_by_id(request: Request, service_id: str = Path(...)) -> Response:
     # Hash request body early (also used for proof)
     try:
         body = await request.json()
@@ -299,8 +301,179 @@ async def paid_proxy_by_id(service_id: str = Path(...), request: Request = None)
     return Response(content=content, status_code=resp.status_code, headers=headers_out, media_type=resp.headers.get("content-type", "application/octet-stream"))
 
 
+@router.api_route("/{provider_name}/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]) 
+async def paid_proxy_by_provider(request: Request, provider_name: str, full_path: str = "") -> Response:
+    # Resolve latest service for provider
+    conn = get_connection()
+    svc = load_service_by_provider_name(conn, provider_name)
+
+    # Load provider for payout
+    curp = conn.cursor()
+    curp.execute("SELECT provider_id, payout_wallet FROM providers WHERE provider_id=?", (svc["provider_id"],))
+    prow = curp.fetchone()
+    curp.close()
+    if not prow:
+        conn.close()
+        raise HTTPException(status_code=500, detail="Provider not found for service")
+    provider = dict(prow)
+
+    # Issue x402 challenge or verify receipt
+    verification = verify_or_challenge(request, svc, provider)
+    if verification.get("challenge") is not None:
+        conn.close()
+        return verification["challenge"]
+
+    paid = verification
+
+    # Build upstream URL from MCP listing
+    from pathlib import Path as _Path
+    import json as _json
+    listing_path = _Path(__file__).resolve().parents[1] / "mcp_listings" / f"{svc['service_id']}.json"
+    try:
+        logger.info(f"x402: provider={provider_name} service_id={svc['service_id']} listing_path={listing_path}")
+    except Exception:
+        pass
+    if not listing_path.exists():
+        conn.close()
+        raise HTTPException(status_code=500, detail="MCP listing missing for service")
+    listing = _json.loads(listing_path.read_text())
+    upstream_base = (listing.get("upstream_base_url") or "").rstrip("/")
+    if not upstream_base:
+        docs = listing.get("docs_url") or ""
+        from urllib.parse import urlparse
+        u = urlparse(docs)
+        if not (u.scheme and u.netloc):
+            conn.close()
+            raise HTTPException(status_code=500, detail="No upstream_base_url/docs host configured")
+        upstream_base = f"{u.scheme}://{u.netloc}"
+    upstream_url = upstream_base + "/" + full_path.lstrip("/")
+    try:
+        logger.info(f"x402: upstream_url={upstream_url}")
+    except Exception:
+        pass
+
+    # Prepare outbound request
+    method = (request.method if request else "POST").upper()
+    headers = {}
+    # Copy headers except hop-by-hop and authorization (we will inject from secret)
+    for k, v in (request.headers.items() if request else []):
+        lk = k.lower()
+        if lk in {"host", "content-length", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "authorization"}:
+            continue
+        headers[k] = v
+    headers.setdefault("Accept", "application/json")
+    headers.setdefault("Accept-Encoding", "identity")
+
+    # Load and inject secret
+    cur = conn.cursor()
+    cur.execute("SELECT auth_location, auth_key, auth_template, api_key_cipher FROM service_secrets WHERE service_id=? ORDER BY rowid DESC LIMIT 1", (svc["service_id"],))
+    sec = cur.fetchone()
+    auth_location = auth_key = auth_template = None
+    key_plain = None
+    if sec:
+        from backend.crypto import decrypt_secret
+        auth_location, auth_key, auth_template = sec[0], sec[1], sec[2]
+        try:
+            key_plain = decrypt_secret(sec[3], aad=svc["service_id"].encode("utf-8")).decode("utf-8")
+        except Exception:
+            key_plain = None
+    cur.close()
+
+    # Body/params and auth injection
+    params = {}
+    body_json = None
+    raw_body = None
+    if method == "GET":
+        params = dict(request.query_params) if request else {}
+        if key_plain and auth_location == "query":
+            params[auth_key or "api_key"] = (auth_template or "{key}").replace("{key}", key_plain)
+        if key_plain and (auth_location or "header").lower() == "header":
+            headers[auth_key or "Authorization"] = (auth_template or "Bearer {key}").replace("{key}", key_plain)
+    else:
+        # Try to parse JSON; fallback to raw
+        try:
+            body_json = await request.json() if request else None
+        except Exception:
+            body_json = None
+        if body_json is None and request is not None:
+            raw_body = await request.body()
+        if key_plain and (auth_location or "header").lower() == "header":
+            headers[auth_key or "Authorization"] = (auth_template or "Bearer {key}").replace("{key}", key_plain)
+        elif key_plain and auth_location == "query":
+            params = dict(request.query_params) if request else {}
+            params[auth_key or "api_key"] = (auth_template or "{key}").replace("{key}", key_plain)
+
+    # Hash request canonical form
+    try:
+        payload_for_hash = body_json if method != "GET" else params
+    except Exception:
+        payload_for_hash = {}
+    req_hash = canonical_keccak_hex(payload_for_hash or {})
+
+    # Perform upstream call
+    try:
+        if method == "GET":
+            resp = requests.get(upstream_url, params=params, headers=headers, timeout=30)
+        else:
+            if body_json is not None:
+                headers.setdefault("Content-Type", "application/json")
+                resp = requests.request(method, upstream_url, json=body_json, params=params, headers=headers, timeout=30)
+            else:
+                resp = requests.request(method, upstream_url, data=raw_body, params=params, headers=headers, timeout=30)
+    except requests.RequestException as e:
+        conn.close()
+        raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
+
+    # Hash response JSON when possible
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"non_json": True, "status_code": resp.status_code}
+    resp_hash = canonical_keccak_hex(resp_json)
+
+    # Emit on-chain proof and record
+    call_id = str(uuid.uuid4())
+    try:
+        tx_hash = emit_onchain_proof(call_id, req_hash, resp_hash)
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"On-chain emission failed: {e}")
+
+    cur = conn.cursor()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        """
+        INSERT INTO api_calls (call_id, service_id, tx_hash, request_hash, response_hash, timestamp, payer, amount_paid_usdc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            call_id,
+            svc["service_id"],
+            tx_hash,
+            req_hash,
+            resp_hash,
+            now,
+            paid.get("payer"),
+            float(paid.get("amount") or 0.0),
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    import os
+    subgraph_base = os.getenv("SUBGRAPH_EXPLORER_BASE", "https://thegraph.com/explorer?query=0pi&search=")
+    headers_out = {
+        "X-0pi-Call-Id": call_id,
+        "X-0pi-Tx-Hash": tx_hash,
+        "X-0pi-Subgraph": f"{subgraph_base}{svc['service_id']}",
+    }
+    return Response(content=resp.content, status_code=resp.status_code, headers=headers_out, media_type=resp.headers.get("content-type", "application/octet-stream"))
+
+
 @router.post("/{provider_name}")
-async def paid_proxy(provider_name: str = Path(...), request: Request = None) -> Response:
+async def paid_proxy(request: Request, provider_name: str = Path(...)) -> Response:
     # Hash request body early (also used for proof)
     try:
         body = await request.json()
@@ -340,6 +513,10 @@ async def paid_proxy(provider_name: str = Path(...), request: Request = None) ->
     from pathlib import Path
     import json as _json
     listing_path = Path(__file__).resolve().parents[1] / "mcp_listings" / f"{svc['service_id']}.json"
+    try:
+        logger.info(f"x402: provider={provider_name} service_id={service_id} listing_path={listing_path}")
+    except Exception:
+        pass
     if not listing_path.exists():
         conn.close()
         raise HTTPException(status_code=500, detail="MCP listing missing for service")

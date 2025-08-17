@@ -14,7 +14,8 @@ def get_connection() -> sqlite3.Connection:
     cur = conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA synchronous=NORMAL")
-    cur.execute("PRAGMA foreign_keys=ON")
+    # Disable FK enforcement globally per request
+    cur.execute("PRAGMA foreign_keys=OFF")
     cur.close()
     return conn
 
@@ -65,6 +66,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             api_docs_url TEXT NOT NULL,
             price_per_call_usdc REAL NOT NULL,
             category TEXT NOT NULL,
+            upstream_base_url TEXT NOT NULL,
             x402_url TEXT NOT NULL,
             analytics_url TEXT,
             created_at TEXT NOT NULL,
@@ -88,6 +90,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                     api_docs_url TEXT NOT NULL,
                     price_per_call_usdc REAL NOT NULL,
                     category TEXT NOT NULL,
+                    upstream_base_url TEXT NOT NULL,
                     x402_url TEXT NOT NULL,
                     analytics_url TEXT,
                     created_at TEXT NOT NULL,
@@ -98,8 +101,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             # Copy data
             cur.execute(
                 """
-                INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at)
-                SELECT service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at
+                INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, upstream_base_url, x402_url, analytics_url, created_at)
+                SELECT service_id, provider_id, api_docs_url, price_per_call_usdc, category, '' as upstream_base_url, x402_url, analytics_url, created_at
                 FROM services_old
                 """
             )
@@ -107,6 +110,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             cur.execute("DROP TABLE services_old")
     except Exception:
         # If anything goes wrong, do not block startup; schema will be handled next run or manually
+        pass
+
+    # Migration: add upstream_base_url column if missing
+    try:
+        cols = _columns(conn, 'services')
+        if 'upstream_base_url' not in cols:
+            cur.execute("ALTER TABLE services ADD COLUMN upstream_base_url TEXT NOT NULL DEFAULT ''")
+    except Exception:
         pass
 
     # Service secrets (encrypted)

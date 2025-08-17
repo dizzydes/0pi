@@ -53,6 +53,7 @@ class ServiceCreate(BaseModel):
     price_per_call_usdc: float = Field(ge=0)
     payout_wallet: str  # Provider payout EVM address
     category: str
+    upstream_base_url: HttpUrl  # e.g., https://api.openai.com
 
     # Optional auth details for injecting provider API key
     auth_location: str | None = Field(default="header", description="header or query")
@@ -89,7 +90,7 @@ def create_service(payload: ServiceCreate) -> dict:
 
     # Generate IDs
     service_id = f"svc_{uuid.uuid4().hex[:8]}"
-    # Deterministic provider_id derived from provider_name to avoid FK mismatches
+    # Default deterministic provider_id derived from provider_name
     provider_id = f"prov_{payload.provider_name}"
 
     # Expose x402 endpoint by provider_name (human-friendly) instead of opaque service_id
@@ -104,21 +105,27 @@ def create_service(payload: ServiceCreate) -> dict:
     cur = conn.cursor()
 
     try:
-        # Ensure provider row exists with deterministic provider_id
-        cur.execute(
-            """
-            INSERT OR IGNORE INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                provider_id,
-                payload.provider_name,
-                (payload.cdp_wallet_id or ""),
-                payload.payout_wallet,
-                now,
-            ),
-        )
-        # Optionally update payout wallet if provider already existed
+        # Prefer existing provider by name (legacy rows may use random provider_id)
+        cur.execute("SELECT provider_id FROM providers WHERE provider_name = ?", (payload.provider_name,))
+        row = cur.fetchone()
+        if row and row[0]:
+            provider_id = row[0]
+        else:
+            # Ensure provider row exists with deterministic provider_id
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO providers (provider_id, provider_name, cdp_wallet_id, payout_wallet, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    provider_id,
+                    payload.provider_name,
+                    (payload.cdp_wallet_id or ""),
+                    payload.payout_wallet,
+                    now,
+                ),
+            )
+        # Keep payout wallet up to date for the chosen provider_id
         cur.execute(
             """
             UPDATE providers SET payout_wallet = ?, cdp_wallet_id = COALESCE(NULLIF(?, ''), cdp_wallet_id)
@@ -139,6 +146,7 @@ def create_service(payload: ServiceCreate) -> dict:
             "category": payload.category,
             "price_per_call_usdc": payload.price_per_call_usdc,
             "docs_url": str(payload.api_docs_url),
+            "upstream_base_url": str(payload.upstream_base_url),
             # API carry-through base path for this service
             "api_base": f"/api/{payload.provider_name}",
             "x402_url": x402_url,
@@ -149,8 +157,8 @@ def create_service(payload: ServiceCreate) -> dict:
         # Insert service row
         cur.execute(
             """
-            INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, x402_url, analytics_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO services (service_id, provider_id, api_docs_url, price_per_call_usdc, category, upstream_base_url, x402_url, analytics_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 service_id,
@@ -158,6 +166,7 @@ def create_service(payload: ServiceCreate) -> dict:
                 str(payload.api_docs_url),
                 float(payload.price_per_call_usdc),
                 payload.category,
+                str(payload.upstream_base_url),
                 x402_url,
                 analytics_url,
                 now,

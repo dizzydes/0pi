@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="0pi-backend")
 
+# Ensure our module loggers emit INFO to console
+try:
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("backend").setLevel(logging.INFO)
+    logging.getLogger(__name__).setLevel(logging.INFO)
+except Exception:
+    pass
+
+# Lightweight request logger to see early-stage requests before routing
+@app.middleware("http")
+async def _early_log(request, call_next):
+    try:
+        print(f"proxy: incoming {request.method} {request.url.path}", flush=True)
+    except Exception:
+        pass
+    response = await call_next(request)
+    try:
+        print(f"proxy: completed {response.status_code} {request.url.path}", flush=True)
+    except Exception:
+        pass
+    return response
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -108,6 +130,8 @@ app.include_router(x402_router)
 app.include_router(admin_router)
 app.include_router(factory_router)
 app.include_router(cdp_router)
-from backend.routers.api_proxy import router as api_proxy_router
+from backend.routers.api_proxy_clean import router as api_proxy_router
 app.include_router(api_proxy_router)
+from backend.routers.api_proxy_clean import open_router as root_proxy_router
+app.include_router(root_proxy_router)
 

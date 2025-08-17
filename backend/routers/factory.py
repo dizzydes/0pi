@@ -49,7 +49,10 @@ def factory_form() -> str:
               <label>API Docs Link</label>
               <input name="api_docs_url" type="url" required />
             </div>
-            <div></div>
+            <div>
+              <label>Upstream Base URL</label>
+              <input name="upstream_base_url" type="url" placeholder="https://api.openai.com" required />
+            </div>
           </div>
 
           <div class="row3">
@@ -140,6 +143,7 @@ def factory_submit(
     provider_name: str = Form(...),
     ens_name: str = Form(...),
     api_docs_url: str = Form(...),
+    upstream_base_url: str = Form(...),
     category: str = Form(...),
     price_per_call_usdc: float = Form(...),
     api_key_plain: str | None = Form(None),
@@ -177,6 +181,7 @@ def factory_submit(
             price_per_call_usdc=price_per_call_usdc,
             payout_wallet=payout_wallet,
             category=category,
+            upstream_base_url=HttpUrl(upstream_base_url),
             auth_location=auth_location,
             auth_key=auth_key,
             auth_template=auth_template,
