@@ -237,33 +237,85 @@ def verify_or_challenge(req: Request, svc: Dict[str, Any], provider: Dict[str, A
 
 
 def emit_onchain_proof(call_id: str, req_hash: str, resp_hash: str) -> str:
-    # Emit event via Web3 to ApiCallsRegistry
-    import os
+    # Emit event via Web3 to ApiCallsRegistry with nonce-safe retries
+    import os, time
     from web3 import Web3
+    try:
+        from web3.middleware import construct_nonce_manager  # type: ignore
+    except Exception:
+        construct_nonce_manager = None  # type: ignore
+
     rpc = os.getenv("BASE_RPC_URL")
     pk = os.getenv("ETH_PRIVATE_KEY")
     contract_addr = os.getenv("REGISTRY_CONTRACT_ADDRESS")
     contract_abi_path = os.getenv("REGISTRY_CONTRACT_ABI", "contracts/ApiCallsRegistry.abi.json")
     if not (rpc and pk and contract_addr):
-        # As a fallback (for local dev without deployment), generate deterministic tx-hash-like value
+        # Fallback (dev-only): deterministic tx-hash-like value when chain config is missing
         return "0x" + uuid.uuid5(uuid.NAMESPACE_URL, call_id).hex
+
     w3 = Web3(Web3.HTTPProvider(rpc))
     acct = w3.eth.account.from_key(pk)
+
+    # Attach a nonce manager if available (helps with concurrent sends in-process)
+    try:
+        if construct_nonce_manager is not None:
+            w3.middleware_onion.add(construct_nonce_manager(acct.address))  # type: ignore[misc]
+    except Exception:
+        pass
+
     from pathlib import Path
     abi = json.loads(Path(contract_abi_path).read_text())
     contract = w3.eth.contract(address=Web3.to_checksum_address(contract_addr), abi=abi)
-    nonce = w3.eth.get_transaction_count(acct.address)
-    tx = contract.functions.emitApiCallProved(call_id, req_hash, resp_hash).build_transaction({
-        "from": acct.address,
-        "nonce": nonce,
-        "chainId": w3.eth.chain_id,
-        "gas": 300000,
-        "maxFeePerGas": w3.to_wei("1.5", "gwei"),
-        "maxPriorityFeePerGas": w3.to_wei("1", "gwei"),
-    })
-    signed = acct.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    return tx_hash.hex()
+
+    def _build_tx(nonce: int, max_fee_gwei: float, prio_fee_gwei: float):
+        return contract.functions.emitApiCallProved(call_id, req_hash, resp_hash).build_transaction({
+            "from": acct.address,
+            "nonce": nonce,
+            "chainId": w3.eth.chain_id,
+            "gas": 300000,
+            "maxFeePerGas": w3.to_wei(str(max_fee_gwei), "gwei"),
+            "maxPriorityFeePerGas": w3.to_wei(str(prio_fee_gwei), "gwei"),
+        })
+
+    attempts = 3
+    fee, prio = 1.5, 1.0
+    last_err: Exception | None = None
+
+    for _ in range(attempts):
+        try:
+            # Use pending nonce to avoid collisions with in-flight txs
+            nonce = w3.eth.get_transaction_count(acct.address, block_identifier="pending")
+            tx = _build_tx(nonce, fee, prio)
+            signed = acct.sign_transaction(tx)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            return tx_hash.hex()
+        except ValueError as e:  # web3.py wraps RPC errors in ValueError
+            # Extract message if present
+            msg = ""
+            try:
+                msg = (e.args[0] or {}).get("message", "")  # type: ignore[index]
+            except Exception:
+                msg = str(e)
+            # Retry on common nonce/price races
+            retriable = any(s in msg for s in [
+                "nonce too low",
+                "replacement transaction underpriced",
+                "already known",
+                "transaction underpriced",
+            ])
+            if retriable:
+                last_err = e
+                # small fee bump and short backoff
+                fee *= 1.2
+                prio *= 1.2
+                time.sleep(0.25)
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            break
+
+    raise RuntimeError(f"Failed to send tx after retries: {last_err}")
 
 
 def load_service_by_provider_name(conn, provider_name: str) -> Dict[str, Any]:

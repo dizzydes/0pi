@@ -1,0 +1,11 @@
+{
+  "id": "svc_afb95f66",
+  "provider_id": "prov_polygon",
+  "name": "polygon",
+  "category": "\ud83d\udcc8 Market Data",
+  "price_per_call_usdc": 0.02,
+  "docs_url": "https://polygon.io/docs/rest/",
+  "upstream_base_url": "https://api.polygon.io/",
+  "api_base": "/api/polygon",
+  "x402_url": "/x402/polygon"
+}

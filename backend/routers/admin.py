@@ -56,10 +56,9 @@ def admin_home() -> str:
     rows_html = "".join(
         (
             lambda service_id, name, category, call_count, price: (
-                f"<tr><td>{service_id}</td><td>{name}</td><td>{category}</td>"
+                f"<tr><td><a href='/admin/services/{name}' style='font-weight:600; color:#1d4ed8; text-decoration:none'>{name}</a></td><td>{category}</td>"
                 f"<td style='text-align:right'>{call_count}</td>"
                 f"<td style='text-align:right'>$ {call_count * float(price):.2f}</td>"
-                f"<td><a href='/admin/services/{name}'>details</a></td>"
                 f"<td>{_verify_link(service_id)}</td>"
                 f"<td><form method='post' action='/admin/services/{service_id}/delete' style='display:inline'>"
                 f"<button type='submit' onclick=\"return confirm('Delete this service?')\">Delete</button>"
@@ -82,10 +81,13 @@ def admin_home() -> str:
       </head>
       <body>
         <h1>Available Agentic APIs</h1>
-        <a href="https://x402.gitbook.io/x402/getting-started/quickstart-for-buyers">You will pay with USDC on Base net with each request using the x402 standard</a>
+        <a href="https://x402.gitbook.io/x402/getting-started/quickstart-for-buyers">You will pay with USDC on Base with each request using the x402 standard</a>
+        <br/>
+        <br/>
+        <br/>
         <table>
           <thead>
-            <tr><th>Service ID</th><th>Name</th><th>Category</th><th>Call Count</th><th>x402 Revenue</th><th>Details</th><th>Verify (The Graph)</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Category</th><th>Call Count</th><th>x402 Revenue</th><th>Verify (The Graph)</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {rows_html}

@@ -9,9 +9,9 @@
       "name": "ApiCallsRegistry",
       "network": "base",
       "source": {
-        "address": "{{REGISTRY_CONTRACT_ADDRESS}}",
+        "address": "0x92b3d8295935D6CA6591c8B4F00d85AcA2314616",
         "abi": "ApiCallsRegistry",
-        "startBlock": {{START_BLOCK}}
+        "startBlock": 34285640
       },
       "mapping": {
         "kind": "ethereum/events",
