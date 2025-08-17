@@ -5,6 +5,7 @@ from pathlib import Path
 import logging
 
 from fastapi import FastAPI, Response
+from fastapi.responses import RedirectResponse
 
 # Load environment variables early from project root
 try:
@@ -119,8 +120,20 @@ def startup() -> None:
 
 
 @app.get("/")
+def root_redirect():
+    # Redirect home to main list
+    return RedirectResponse(url="/all", status_code=307)
+
+
+@app.get("/health")
 def health():
     return {"status": "ok", "service": "backend"}
+
+
+@app.get("/all")
+def all_redirect():
+    # Keep services under /admin but expose list at /all
+    return RedirectResponse(url="/admin", status_code=307)
 
 
 @app.get("/favicon.ico")

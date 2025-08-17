@@ -5,12 +5,12 @@ from pathlib import Path
 import json
 
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import HttpUrl
 
 from backend.routers.services import create_service, ServiceCreate
 
-router = APIRouter(prefix="/factory", tags=["factory"])
+router = APIRouter(prefix="/new", tags=["factory"])
 
 
 @router.get("", response_class=HTMLResponse)
@@ -71,7 +71,7 @@ def factory_form() -> str:
             }
 
             .row{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-            .row3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+            .row2{ display:grid; grid-template-columns:2fr 1fr; gap:16px; }
 
             .note{
               color:var(--muted);
@@ -96,7 +96,7 @@ def factory_form() -> str:
         </head>
         <body>
           <h1>Publish a Service</h1>
-          <form method="post" action="/factory" id="service-form">
+          <form method="post" action="/new" id="service-form">
             <label>Provider Name (lowercase, one word with underscores)</label>
             <input name="provider_name" required placeholder="e.g., openai or weather_api" />
 
@@ -118,9 +118,8 @@ def factory_form() -> str:
                 <input name="upstream_base_url" type="url" placeholder="https://api.openai.com" required />
               </div>
             </div>
-
-            <div class="row3">
-              <div></div>
+            
+            <div class="row2">
               <div>
                 <label>Category</label>
                 <input name="category" list="categories" placeholder="Select a category" required />
@@ -254,18 +253,8 @@ def factory_submit(
         raise HTTPException(status_code=400, detail=f"invalid form: {e}")
 
     out = create_service(payload)
-    # Simple post-create page
-    return HTMLResponse(
-        f"""
-        <html><body>
-          <h2>Service created</h2>
-          <p>API Base: <code>{out.get('api_base','')}</code></p>
-          <p>X402: <code>POST {out['x402_url']}</code></p>
-          <p>Payout: <code>{payout_wallet}</code> (resolved from <code>{ens_name}</code>)</p>
-          <p><a href="/admin/services/{provider_name}">View in Admin</a></p>
-        </body></html>
-        """
-    )
+    # Redirect directly to the admin service details page after creation
+    return RedirectResponse(url=f"/admin/services/{provider_name}", status_code=303)
 
 
 @router.get("/catalog", response_class=JSONResponse)

@@ -169,6 +169,9 @@ def admin_home() -> str:
             {rows_html}
           </tbody>
         </table>
+        <div style="margin-top:16px;">
+          <a href="/new"><button type="button">➕ Create Agentic API</button></a>
+        </div>
       </body>
     </html>
     """
@@ -533,11 +536,12 @@ def service_details(provider_name: str) -> str:
                 <button type='submit' onclick="return confirm('Delete this service?')">Delete this service</button>
               </form>
             </h1>
-            <p><a href="/admin">Back to Menu</a> · <a target="_blank" href="{(subgraph_explorer_full or (subgraph_base + str(service_id)))}">View in The Graph</a></p>
+            <p><a href="/all">Back to Menu</a> · <a target="_blank" href="{(subgraph_explorer_full or (subgraph_base + str(service_id)))}">View in The Graph</a></p>
             <p style='color:#444'>
               API Base: <code>https://0pi.dev/{provider_name}/ + <a href="{docs_url}" style="color:white" target="_blank" rel="noopener noreferrer">endpoint</a></code><br/>
               Pricing: <strong>${price_usdc:.2f} USDC</strong> per call, paid at request-time by x402<br/>
-              Upstream base: <code>{upstream_base}</code><br/>
+              Upstream base: <code>{upstream_base}</code> - remove this from the endpoint in docs.<br/><br/>
+              <span style="display:inline-block; margin-top:6px; color:black; font-size:14px; background:#e6f2ff; border:1px solid #cfe3ff; padding:6px 8px; border-radius:6px;">You can now query the API base with any extension from <a href="{docs_url}" target="_blank" rel="noopener noreferrer">these docs</a></span>
             </p>
           </div>
           <div class="chart-card">
