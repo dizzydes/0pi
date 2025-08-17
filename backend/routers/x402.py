@@ -22,34 +22,138 @@ class X402Error(Exception):
 
 def _verify_receipt(receipt_header: str, *, expected_amount: float, expected_pay_to: str, network: str) -> Dict[str, Any] | None:
     """
-    Dev-only receipt verifier. When X402_ACCEPT_UNSIGNED=true, accepts a JSON stringified
-    object in the receipt header with keys: { payer, amount, ticket_id, pay_to, network }.
-    Returns the parsed dict if fields look sane and match expectations; otherwise None.
-    NOTE: Replace this with a real x402/CDP verification as available.
+    Production-style receipt verifier.
+
+    Expects a JSON object in the receipt header with keys:
+    { payer, amount, ticket_id, pay_to, network }
+
+    Verifies on-chain (Base) that ticket_id (a tx hash) executed a USDC transfer
+    of at least `expected_amount` to `expected_pay_to` and that the chain matches `network`.
+
+    Env required:
+      - BASE_RPC_URL: HTTPS RPC endpoint for Base
+      - USDC_CONTRACT_ADDRESS: USDC token address on Base
     """
     import os, json as _json
-    if os.getenv("X402_ACCEPT_UNSIGNED", "false").lower() not in ("1", "true", "yes"):
-        return None
+    from web3 import Web3
+
+    logger.info("x402.verify: start parsing receipt header")
     try:
         data = _json.loads(receipt_header)
         if not isinstance(data, dict):
+            logger.warning("x402.verify: receipt not a JSON object")
             return None
-        amt = float(data.get("amount") or 0.0)
-        if amt < expected_amount:
-            return None
-        if (data.get("pay_to") or "").lower() != expected_pay_to.lower():
-            return None
-        if (data.get("network") or "").lower() != network.lower():
-            return None
-        # basic shape ok
-        return {
-            "payer": data.get("payer"),
-            "amount": amt,
-            "ticket_id": data.get("ticket_id") or data.get("id"),
-            "pay_to": data.get("pay_to"),
-            "network": data.get("network"),
-        }
+    except Exception as e:
+        logger.warning(f"x402.verify: invalid JSON in receipt: {e}")
+        return None
+
+    # Quick field checks
+    try:
+        declared_amount = float(data.get("amount") or 0.0)
     except Exception:
+        logger.warning("x402.verify: amount not numeric")
+        return None
+    pay_to_hdr = (data.get("pay_to") or "").strip()
+    network_hdr = (data.get("network") or "").strip().lower()
+    tx_hash = (data.get("ticket_id") or data.get("id") or "").strip()
+    payer_hdr = (data.get("payer") or "").strip()
+
+    logger.info(f"x402.verify: parsed amount={declared_amount} pay_to={pay_to_hdr} network={network_hdr} tx={tx_hash[:10]}…")
+
+    if declared_amount < expected_amount:
+        logger.warning(f"x402.verify: amount too low: declared={declared_amount} expected>={expected_amount}")
+        return None
+    if pay_to_hdr.lower() != expected_pay_to.lower():
+        logger.warning(f"x402.verify: pay_to mismatch: header={pay_to_hdr} expected={expected_pay_to}")
+        return None
+    if network_hdr != network.lower():
+        logger.warning(f"x402.verify: network mismatch: header={network_hdr} expected={network}")
+        return None
+    if not tx_hash or not tx_hash.startswith("0x"):
+        logger.warning("x402.verify: ticket_id missing or not 0x-prefixed")
+        return None
+
+    # On-chain verification
+    rpc = os.getenv("BASE_RPC_URL")
+    usdc_addr_env = os.getenv("USDC_CONTRACT_ADDRESS")
+    if not rpc or not usdc_addr_env:
+        logger.error("x402.verify: missing BASE_RPC_URL or USDC_CONTRACT_ADDRESS; failing closed")
+        return None
+
+    try:
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        # Confirm on Base
+        chain_id = w3.eth.chain_id
+        logger.info(f"x402.verify: connected chain_id={chain_id}")
+        if network.lower() == "base" and chain_id != 8453:
+            logger.warning("x402.verify: RPC not on Base mainnet (8453)")
+            return None
+
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        if not receipt:
+            logger.warning("x402.verify: no receipt for tx")
+            return None
+        if getattr(receipt, 'status', None) != 1:
+            logger.warning("x402.verify: tx status != 1")
+            return None
+
+        usdc_addr = Web3.to_checksum_address(usdc_addr_env)
+        transfer_sig = Web3.keccak(text="Transfer(address,address,uint256)")
+        value_transferred = 0
+        to_matched = False
+        payer_onchain = payer_hdr
+
+        for log in receipt.logs or []:
+            if getattr(log, 'address', None) == usdc_addr and getattr(log, 'topics', None) and log.topics[0] == transfer_sig:
+                try:
+                    to_addr = Web3.to_checksum_address("0x" + log.topics[2].hex()[-40:])
+                except Exception:
+                    to_addr = ""
+                try:
+                    from_addr = Web3.to_checksum_address("0x" + log.topics[1].hex()[-40:])
+                except Exception:
+                    from_addr = ""
+                # Parse 32-byte amount from log.data (can be HexBytes or hex str)
+                raw = 0
+                try:
+                    from hexbytes import HexBytes  # type: ignore
+                except Exception:
+                    HexBytes = bytes  # fallback type hinting
+                try:
+                    if isinstance(log.data, (bytes, bytearray)):
+                        raw = int.from_bytes(log.data, byteorder="big")
+                    elif 'HexBytes' in str(type(log.data)):
+                        # duck-typing for HexBytes
+                        try:
+                            raw = int.from_bytes(bytes(log.data), byteorder="big")
+                        except Exception:
+                            raw = int(getattr(log.data, 'hex', lambda: '0x0')(), 16)
+                    else:
+                        raw = int(str(log.data), 16)
+                except Exception:
+                    raw = 0
+                logger.info(f"x402.verify: Transfer log from={from_addr} to={to_addr} value_raw={raw}")
+                if to_addr.lower() == expected_pay_to.lower():
+                    to_matched = True
+                    value_transferred += raw
+                    payer_onchain = from_addr or payer_onchain
+
+        required_raw = int(round(expected_amount * 10**6))
+        logger.info(f"x402.verify: sum_to_pay_to_raw={value_transferred} required_raw={required_raw}")
+        if not to_matched or value_transferred < required_raw:
+            logger.warning("x402.verify: insufficient transfer to pay_to in tx")
+            return None
+
+        logger.info("x402.verify: success")
+        return {
+            "payer": payer_onchain,
+            "amount": declared_amount,
+            "ticket_id": tx_hash,
+            "pay_to": pay_to_hdr,
+            "network": network_hdr,
+        }
+    except Exception as e:
+        logger.exception(f"x402.verify: exception during on-chain verification: {e}")
         return None
 
 
@@ -85,28 +189,50 @@ def verify_or_challenge(req: Request, svc: Dict[str, Any], provider: Dict[str, A
     pay_to = provider["payout_wallet"]  # type: ignore
     net = _network()
 
-    # Optional server-side verification path. Defaults to issuing a 402.
-    # Enable by setting X402_SERVER_VERIFY=true and providing a receipt in the request headers.
+    logger.info(f"x402: verify_or_challenge price={price_usdc} pay_to={pay_to} net={net}")
+
+    # Server-side verification path: only proceed when a verifiable receipt is present
+    # This is production-style: we do not accept unsigned receipts unless explicitly allowed.
     import os
-    if os.getenv("X402_SERVER_VERIFY", "false").lower() in ("1", "true", "yes"):
-        # Accept a receipt passed by a trusted proxy or client.
-        # For production, replace _verify_receipt with a real verifier.
-        receipt = req.headers.get("x-402-receipt") or req.headers.get("X-402-Receipt")
-        if receipt:
-            try:
-                verified = _verify_receipt(receipt, expected_amount=price_usdc, expected_pay_to=pay_to, network=net)
-                if verified:
-                    return {
-                        "payer": verified.get("payer"),
-                        "amount": float(verified.get("amount") or 0.0),
-                        "ticket_id": verified.get("ticket_id"),
-                        "challenge": None,
-                    }
-            except Exception:
-                # fall through to challenge on any verifier error
-                pass
+    receipt = req.headers.get("x-402-receipt") or req.headers.get("X-402-Receipt")
+    logger.info(f"x402: receipt present={bool(receipt)}")
+    if receipt:
+        try:
+            verified = _verify_receipt(receipt, expected_amount=price_usdc, expected_pay_to=pay_to, network=net)
+            if verified:
+                logger.info(f"x402: receipt verified for tx={str(verified.get('ticket_id'))[:10]}… payer={verified.get('payer')}")
+                return {
+                    "payer": verified.get("payer"),
+                    "amount": float(verified.get("amount") or 0.0),
+                    "ticket_id": verified.get("ticket_id"),
+                    "challenge": None,
+                }
+            else:
+                logger.warning("x402: receipt failed verification; issuing 402 challenge")
+        except Exception as e:
+            logger.exception(f"x402: exception during receipt verification: {e}")
+            # fall through to challenge on any verifier error
+            pass
+
+    # Optionally allow unsigned receipts for local/dev if explicitly enabled
+    if os.getenv("X402_ACCEPT_UNSIGNED", "false").lower() in ("1", "true", "yes") and receipt:
+        try:
+            import json as _json
+            data = _json.loads(receipt)
+            amt = float(data.get("amount") or 0.0)
+            if amt >= price_usdc and (data.get("pay_to") or "").lower() == pay_to.lower() and (data.get("network") or "").lower() == net.lower():
+                logger.info("x402: dev unsigned receipt accepted due to X402_ACCEPT_UNSIGNED=true")
+                return {
+                    "payer": data.get("payer"),
+                    "amount": amt,
+                    "ticket_id": data.get("ticket_id") or data.get("id"),
+                    "challenge": None,
+                }
+        except Exception as e:
+            logger.warning(f"x402: dev unsigned receipt parse error: {e}")
 
     # Default: return a 402 challenge with x402 hints
+    logger.info("x402: returning 402 challenge")
     return {"payer": None, "amount": 0.0, "ticket_id": None, "challenge": _challenge_response(price_usdc, pay_to, net)}
 
 
@@ -136,7 +262,7 @@ def emit_onchain_proof(call_id: str, req_hash: str, resp_hash: str) -> str:
         "maxPriorityFeePerGas": w3.to_wei("1", "gwei"),
     })
     signed = acct.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     return tx_hash.hex()
 
 
@@ -194,7 +320,7 @@ async def paid_proxy_by_id(request: Request, service_id: str = Path(...)) -> Res
     if not prow:
         conn.close()
         raise HTTPException(status_code=500, detail="Provider not found for service")
-    provider = dict(prow)
+    provider = {"provider_id": prow[0], "payout_wallet": prow[1]}
 
     # Issue x402 challenge (or verify if server supports it)
     verification = verify_or_challenge(request, svc, provider)
@@ -315,7 +441,7 @@ async def paid_proxy_by_provider(request: Request, provider_name: str, full_path
     if not prow:
         conn.close()
         raise HTTPException(status_code=500, detail="Provider not found for service")
-    provider = dict(prow)
+    provider = {"provider_id": prow[0], "payout_wallet": prow[1]}
 
     # Issue x402 challenge or verify receipt
     verification = verify_or_challenge(request, svc, provider)

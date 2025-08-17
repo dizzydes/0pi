@@ -17,6 +17,8 @@ def get_connection() -> sqlite3.Connection:
     # Disable FK enforcement globally per request
     cur.execute("PRAGMA foreign_keys=OFF")
     cur.close()
+    # Ensure schema and run lightweight migrations on every open
+    _ensure_schema(conn)
     return conn
 
 
@@ -151,6 +153,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+    # Migrations for api_calls: add missing columns if older table exists
+    try:
+        cols_api = _columns(conn, 'api_calls')
+        if 'payer' not in cols_api:
+            cur.execute("ALTER TABLE api_calls ADD COLUMN payer TEXT")
+        if 'amount_paid_usdc' not in cols_api:
+            cur.execute("ALTER TABLE api_calls ADD COLUMN amount_paid_usdc REAL")
+    except Exception:
+        pass
 
     conn.commit()
     cur.close()
