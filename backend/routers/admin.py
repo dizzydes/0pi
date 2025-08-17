@@ -73,18 +73,94 @@ def admin_home() -> str:
       <head>
         <title>0pi Admin</title>
         <style>
-          body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; }}
-          table {{ border-collapse: collapse; width: 100%; }}
-          th, td {{ border: 1px solid #ddd; padding: 8px; }}
-          th {{ background: #f5f5f5; text-align: left; }}
+          :root{{
+            --bg:#f6f8fb;
+            --card:#ffffff;
+            --text:#1f2937;
+            --muted:#6b7280;
+            --link:#1a73e8;
+            --link-hover:#1558bf;
+            --border:#e5e7eb;
+            --row-alt:#fbfdff;
+            --row-hover:#f1f5ff;
+            --badge:#eef2ff;
+            --code-bg:#0b1020;
+            --code-fg:#d1e0ff;
+            --primary:#1a73e8;
+            --primary-pressed:#1558bf;
+            --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.06);
+          }}
+
+          body {{
+            font: 14px/1.5 -apple-system, system-ui, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+            color:var(--text);
+            background:var(--bg);
+            margin:24px;
+          }}
+          h1, h2{{ margin:0 0 12px 0; font-weight:600; }}
+          a{{ color:var(--link); text-decoration:none; }}
+          a:hover{{ color:var(--link-hover); text-decoration:underline; }}
+
+          table{{
+            width:100%;
+            border-collapse:separate;
+            border-spacing:0;
+            background:var(--card);
+            border:1px solid var(--border);
+            border-radius:12px;
+            box-shadow:var(--shadow);
+          }}
+          thead th{{
+            background:#f9fafb;
+            color:#374151;
+            font-weight:600;
+            font-size:13px;
+            padding:12px 14px;
+            border-bottom:1px solid var(--border);
+          }}
+          tbody td{{
+            padding:12px 14px;
+            border-bottom:1px solid var(--border);
+            font-size:14px;
+          }}
+          tbody tr:nth-child(even){{ background:var(--row-alt); }}
+          tbody tr:hover{{ background:var(--row-hover); }}
+
+          td[style*="text-align:right"]{{ font-variant-numeric:tabular-nums; }}
+
+          td a[href*="thegraph"], td a[href*="explorer"]{{
+            display:inline-block;
+            background:var(--badge);
+            border:1px solid #e0e7ff;
+            padding:4px 8px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:600;
+            text-decoration:none;
+          }}
+          td a[href*="thegraph"]:hover, td a[href*="explorer"]:hover{{ background:#e9efff; }}
+
+          button{{
+            border:1px solid var(--primary);
+            background:var(--primary);
+            color:white;
+            font-weight:600;
+            border-radius:8px;
+            padding:6px 10px;
+            cursor:pointer;
+          }}
+          button:hover{{ background:var(--primary-pressed); }}
+          td form button{{
+            background:#ef4444;
+            border-color:#ef4444;
+          }}
+          td form button:hover{{ background:#dc2626; }}
         </style>
       </head>
       <body>
         <h1>Available Agentic APIs</h1>
         <a href="https://x402.gitbook.io/x402/getting-started/quickstart-for-buyers">You will pay with USDC on Base with each request using the x402 standard</a>
-        <br/>
-        <br/>
-        <br/>
+        <br/><br/><br/>
         <table>
           <thead>
             <tr><th>Name</th><th>Category</th><th>Call Count</th><th>x402 Revenue</th><th>Verify (The Graph)</th><th>Actions</th></tr>
@@ -97,6 +173,7 @@ def admin_home() -> str:
     </html>
     """
     return html
+
 
 
 @router.get("/services/{provider_name}", response_class=HTMLResponse)
@@ -238,30 +315,227 @@ def service_details(provider_name: str) -> str:
     days_json = _json.dumps(days)
     counts_json = _json.dumps(counts)
 
+    STYLE = """
+    :root{
+      --bg:#f6f8fb;
+      --card:#ffffff;
+      --text:#1f2937;
+      --muted:#6b7280;
+      --link:#1a73e8;
+      --link-hover:#1558bf;
+      --border:#e5e7eb;
+      --row-alt:#fbfdff;
+      --row-hover:#f1f5ff;
+      --badge:#eef2ff;
+      --code-bg:#0b1020;
+      --code-fg:#d1e0ff;
+      --primary:#1a73e8;
+      --primary-pressed:#1558bf;
+      --shadow:0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.06);
+    }
+
+    body{
+      font:14px/1.5 -apple-system, system-ui, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+      color:var(--text);
+      background:var(--bg);
+      margin:24px;
+    }
+
+    a{ color:var(--link); text-decoration:none; }
+    a:hover{ color:var(--link-hover); text-decoration:underline; }
+
+    h1{ margin:0 0 8px 0; font-size:22px; font-weight:600; }
+    h2{ margin:0 0 12px 0; font-size:18px; font-weight:600; color:#111827; }
+    .section{ margin:20px 0; }
+
+    /* Header card */
+    .page-header{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:16px;
+      box-shadow:var(--shadow);
+    }
+    .page-header p{ margin:6px 0; color:var(--muted); }
+    .chart-card{ min-width:420px; max-width:480px; }
+    .chart-title{
+      margin:0 0 8px 0;
+      color:#374151;
+      font-size:12px;
+      font-weight:700;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      text-align:right;
+    }
+
+    /* Table card */
+    table{
+      width:100%;
+      border-collapse:separate;
+      border-spacing:0;
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:12px;
+      box-shadow:var(--shadow);
+    }
+    thead th{
+      background:#f9fafb;
+      color:#374151;
+      font-weight:600;
+      font-size:13px;
+      padding:12px 14px;
+      border-bottom:1px solid var(--border);
+      text-align:left;
+    }
+    tbody td{
+      padding:12px 14px;
+      border-bottom:1px solid var(--border);
+      vertical-align:middle;
+      font-size:14px;
+    }
+    tbody tr:nth-child(even){ background:var(--row-alt); }
+    tbody tr:hover{ background:var(--row-hover); }
+
+    /* Numbers align nicely */
+    td[style*="text-align:right"]{ font-variant-numeric:tabular-nums; }
+
+    /* Code chips for hashes */
+    code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background:var(--code-bg);
+      color:var(--code-fg);
+      padding:2px 6px;
+      border-radius:6px;
+      font-size:12px;
+    }
+
+    /* Buttons */
+    button{
+      border:1px solid var(--primary);
+      background:var(--primary);
+      color:#fff;
+      font-weight:600;
+      border-radius:8px;
+      padding:8px 12px;
+      cursor:pointer;
+      transition:background .15s ease;
+    }
+    button:hover{ background:var(--primary-pressed); }
+    /* Inline delete button in H1 — destructive */
+    h1 form button{
+      background:#ef4444;
+      border-color:#ef4444;
+      margin-left:8px;
+      padding:6px 10px;
+    }
+    h1 form button:hover{ background:#dc2626; }
+    """
+
+    SCRIPT = """
+    (function() {
+      const days = DAYS_JSON;
+      const counts = COUNTS_JSON;
+      const svg = document.getElementById('usage-chart');
+      const w = 440, h = 200, padL = 36, padR = 12, padT = 12, padB = 28;
+      const innerW = w - padL - padR;
+      const innerH = h - padT - padB;
+      const max = Math.max(1, ...(counts.length ? counts : [0]));
+      const n = Math.max(1, counts.length);
+      const x = i => padL + (n === 1 ? innerW/2 : (i * innerW) / (n - 1));
+      const y = v => padT + (innerH - (v / max) * innerH);
+
+      const axes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      axes.setAttribute('stroke', '#ccc');
+      axes.setAttribute('stroke-width', '1');
+      const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      xAxis.setAttribute('x1', padL); xAxis.setAttribute('y1', padT + innerH);
+      xAxis.setAttribute('x2', padL + innerW); xAxis.setAttribute('y2', padT + innerH);
+      axes.appendChild(xAxis);
+      const yAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      yAxis.setAttribute('x1', padL); yAxis.setAttribute('y1', padT);
+      yAxis.setAttribute('x2', padL); yAxis.setAttribute('y2', padT + innerH);
+      axes.appendChild(yAxis);
+      svg.appendChild(axes);
+
+      const yTicks = [0, max];
+      yTicks.forEach((tv) => {
+        const ty = y(tv);
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', padL - 8);
+        t.setAttribute('y', ty + 4);
+        t.setAttribute('text-anchor', 'end');
+        t.setAttribute('font-size', '10');
+        t.setAttribute('fill', '#666');
+        t.textContent = String(tv);
+        svg.appendChild(t);
+      });
+
+      if (days.length) {
+        const labelIdx = [...new Set([0, Math.floor((days.length-1)/2), days.length-1])];
+        labelIdx.forEach(i => {
+          const tx = x(i);
+          const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          t.setAttribute('x', tx);
+          t.setAttribute('y', padT + innerH + 16);
+          t.setAttribute('text-anchor', 'middle');
+          t.setAttribute('font-size', '10');
+          t.setAttribute('fill', '#666');
+          t.textContent = days[i];
+          svg.appendChild(t);
+        });
+      }
+
+      if (!counts.length) {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', w - 8);
+        t.setAttribute('y', 16);
+        t.setAttribute('text-anchor', 'end');
+        t.setAttribute('font-size', '12');
+        t.setAttribute('fill', '#777');
+        t.textContent = 'No calls in the last 7 days';
+        svg.appendChild(t);
+        return;
+      }
+
+      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      poly.setAttribute('fill', 'none');
+      poly.setAttribute('stroke', '#4f46e5');
+      poly.setAttribute('stroke-width', '2');
+      poly.setAttribute('points', counts.map((v,i)=>`${x(i)},${y(v)}`).join(' '));
+      svg.appendChild(poly);
+
+      counts.forEach((v,i) => {
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('cx', x(i));
+        c.setAttribute('cy', y(v));
+        c.setAttribute('r', '3');
+        c.setAttribute('fill', '#4f46e5');
+        svg.appendChild(c);
+      });
+    })();
+    """
+
     html = f"""
     <html>
       <head>
         <title>0pi Admin - {provider_name}</title>
-        <style>
-          body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; }}
-          table {{ border-collapse: collapse; width: 100%; }}
-          th, td {{ border: 1px solid #ddd; padding: 8px; }}
-          th {{ background: #f5f5f5; text-align: left; }}
-          code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }}
-          .section {{ margin: 20px 0; }}
-          .page-header {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }}
-          .chart-card {{ min-width: 420px; max-width: 480px; }}
-          .chart-title {{ margin: 0 0 8px 0; color: #333; font-size: 14px; font-weight: 600; text-align: right; }}
-        </style>
+        <style>{STYLE}</style>
       </head>
       <body>
         <div class="page-header">
           <div>
-            <h1>{provider_name} — {name} <small style='color:#555'>[{category}]</small><form method='post' action='/admin/services/{service_id}/delete' style='display:inline'><button type='submit' onclick="return confirm('Delete this service?')">Delete this service</button></form></h1>
+            <h1>{provider_name} — {name} <small style='color:#555'>[{category}]</small>
+              <form method='post' action='/admin/services/{service_id}/delete' style='display:inline'>
+                <button type='submit' onclick="return confirm('Delete this service?')">Delete this service</button>
+              </form>
+            </h1>
             <p><a href="/admin">Back to Menu</a> · <a target="_blank" href="{(subgraph_explorer_full or (subgraph_base + str(service_id)))}">View in The Graph</a></p>
-
             <p style='color:#444'>
-              API Base: <code>https://0pi.dev/{provider_name}/ + <a href="{docs_url}" target="_blank" rel="noopener noreferrer">endpoint</a></code><br/>
+              API Base: <code>https://0pi.dev/{provider_name}/ + <a href="{docs_url}" style="color:white" target="_blank" rel="noopener noreferrer">endpoint</a></code><br/>
               Pricing: <strong>${price_usdc:.2f} USDC</strong> per call, paid at request-time by x402<br/>
               Upstream base: <code>{upstream_base}</code><br/>
             </p>
@@ -285,100 +559,15 @@ def service_details(provider_name: str) -> str:
         </div>
 
         <script>
-          (function() {{
-            const days = {days_json};
-            const counts = {counts_json};
-            const svg = document.getElementById('usage-chart');
-            const w = 440, h = 200, padL = 36, padR = 12, padT = 12, padB = 28;
-            const innerW = w - padL - padR;
-            const innerH = h - padT - padB;
-            const max = Math.max(1, ...(counts.length ? counts : [0]));
-            const n = Math.max(1, counts.length);
-            const x = i => padL + (n === 1 ? innerW/2 : (i * innerW) / (n - 1));
-            const y = v => padT + (innerH - (v / max) * innerH);
-
-            // Axes
-            const axes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            axes.setAttribute('stroke', '#ccc');
-            axes.setAttribute('stroke-width', '1');
-            // X axis
-            const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            xAxis.setAttribute('x1', padL); xAxis.setAttribute('y1', padT + innerH);
-            xAxis.setAttribute('x2', padL + innerW); xAxis.setAttribute('y2', padT + innerH);
-            axes.appendChild(xAxis);
-            // Y axis
-            const yAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            yAxis.setAttribute('x1', padL); yAxis.setAttribute('y1', padT);
-            yAxis.setAttribute('x2', padL); yAxis.setAttribute('y2', padT + innerH);
-            axes.appendChild(yAxis);
-            svg.appendChild(axes);
-
-            // Y ticks (0 and max)
-            const yTicks = [0, max];
-            yTicks.forEach((tv) => {{
-              const ty = y(tv);
-              const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-              t.setAttribute('x', padL - 8);
-              t.setAttribute('y', ty + 4);
-              t.setAttribute('text-anchor', 'end');
-              t.setAttribute('font-size', '10');
-              t.setAttribute('fill', '#666');
-              t.textContent = String(tv);
-              svg.appendChild(t);
-            }});
-
-            // X labels (first, middle, last) to avoid clutter
-            if (days.length) {{
-              const labelIdx = [...new Set([0, Math.floor((days.length-1)/2), days.length-1])];
-              labelIdx.forEach(i => {{
-                const tx = x(i);
-                const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                t.setAttribute('x', tx);
-                t.setAttribute('y', padT + innerH + 16);
-                t.setAttribute('text-anchor', 'middle');
-                t.setAttribute('font-size', '10');
-                t.setAttribute('fill', '#666');
-                t.textContent = days[i];
-                svg.appendChild(t);
-              }});
-            }}
-
-            if (!counts.length) {{
-              const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-              t.setAttribute('x', w - 8);
-              t.setAttribute('y', 16);
-              t.setAttribute('text-anchor', 'end');
-              t.setAttribute('font-size', '12');
-              t.setAttribute('fill', '#777');
-              t.textContent = 'No calls in the last 7 days';
-              svg.appendChild(t);
-              return;
-            }}
-
-            // Line path
-            const pts = counts.map((v,i) => `${'${'}x(i){'}'},${'${'}y(v){'}'}`).join(' ');
-            const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-            poly.setAttribute('fill', 'none');
-            poly.setAttribute('stroke', '#4f46e5');
-            poly.setAttribute('stroke-width', '2');
-            poly.setAttribute('points', counts.map((v,i)=>`${'${'}x(i){'}'},${'${'}y(v){'}'}`).join(' '));
-            svg.appendChild(poly);
-
-            // Dots
-            counts.forEach((v,i) => {{
-              const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-              c.setAttribute('cx', x(i));
-              c.setAttribute('cy', y(v));
-              c.setAttribute('r', '3');
-              c.setAttribute('fill', '#4f46e5');
-              svg.appendChild(c);
-            }});
-          }})();
+          {SCRIPT.replace("DAYS_JSON", days_json).replace("COUNTS_JSON", counts_json)}
         </script>
       </body>
     </html>
     """
     return html
+
+
+
 
 @router.post("/services/{service_id}/delete")
 def delete_service(service_id: str):
