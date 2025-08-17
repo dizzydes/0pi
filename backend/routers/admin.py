@@ -159,8 +159,10 @@ def admin_home() -> str:
       </head>
       <body>
         <h1>Available Agentic APIs</h1>
-        <a href="https://x402.gitbook.io/x402/getting-started/quickstart-for-buyers">You will pay with USDC on Base with each request using the x402 standard</a>
-        <br/><br/><br/>
+        <p>Wrap any API in a agent-friendly x402 response - allowing it to be consumed on a pay-as-you-go basis.<br/>Earn USDC for adding endpoints,
+        <a href="https://x402.gitbook.io/x402/getting-started/quickstart-for-buyers">users pay with USDC on Base with each request.</a>
+        </p>
+        <br/><br/>
         <table>
           <thead>
             <tr><th>Name</th><th>Category</th><th>Call Count</th><th>x402 Revenue</th><th>Verify (The Graph)</th><th>Actions</th></tr>
