@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 # Load environment variables early from project root
 try:
@@ -121,6 +121,18 @@ def startup() -> None:
 @app.get("/")
 def health():
     return {"status": "ok", "service": "backend"}
+
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    # SVG favicon rendering the robot emoji 🤖
+    svg = (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        "<text x='50%' y='50%' dominant-baseline='central' text-anchor='middle' font-size='52'>🤖</text>"
+        "</svg>"
+    )
+    return Response(content=svg, media_type="image/svg+xml")
 
 
 # Routers
